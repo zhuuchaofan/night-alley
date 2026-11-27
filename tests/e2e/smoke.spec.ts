@@ -304,33 +304,53 @@ test.describe('Night Alley pixel visuals & controls', () => {
     const box = await page.locator('canvas').boundingBox();
     expect(box).not.toBeNull();
 
-    const toClient = (lx: number, ly: number) => ({
-      x: box!.x + (lx / 960) * box!.width,
-      y: box!.y + (ly / 540) * box!.height,
-    });
+    const originX = box!.x + 80;
+    const originY = box!.y + box!.height * 0.55;
+    const farRightX = originX + 220;
 
     const before = await getDebugState(page);
-    const origin = toClient(140, 300);
-    const farRight = toClient(360, 300);
-    const shortBackLeft = toClient(300, 300);
 
-    await page.mouse.move(origin.x, origin.y);
+    await page.mouse.move(originX, originY);
     await page.mouse.down();
-    await page.mouse.move(farRight.x, farRight.y, { steps: 8 });
-    await page.waitForTimeout(400);
+    await page.mouse.move(farRightX, originY, { steps: 8 });
+    await page.waitForTimeout(350);
 
     const afterRight = await getDebugState(page);
-    expect(afterRight.playerX).toBeGreaterThan(before.playerX + 30);
+    expect(afterRight.playerX).toBeGreaterThan(before.playerX + 25);
 
-    await page.mouse.move(shortBackLeft.x, shortBackLeft.y, { steps: 6 });
-    await page.waitForTimeout(500);
+    // Pull back 65 CSS px (50 radius + 7 deadzone + 8 CSS px), still 155 CSS px right of start.
+    const earlyBackX = farRightX - 65;
+    await page.mouse.move(earlyBackX, originY, { steps: 6 });
+    const earlyStart = await getDebugState(page);
+    await page.waitForTimeout(450);
+    const earlyEnd = await getDebugState(page);
+    const earlyDelta = earlyStart.playerX - earlyEnd.playerX;
+    expect(earlyDelta).toBeGreaterThan(4);
+
+    // Pull further back to 28.5 CSS px past followed base (50% speed) then >=50 CSS px (100% speed).
+    const halfBackX = farRightX - 78.5;
+    await page.mouse.move(halfBackX, originY, { steps: 4 });
+    const halfStart = await getDebugState(page);
+    await page.waitForTimeout(450);
+    const halfEnd = await getDebugState(page);
+    const halfDelta = halfStart.playerX - halfEnd.playerX;
+
+    const fullBackX = farRightX - 105;
+    await page.mouse.move(fullBackX, originY, { steps: 4 });
+    const fullStart = await getDebugState(page);
+    await page.waitForTimeout(450);
+    const fullEnd = await getDebugState(page);
+    const fullDelta = fullStart.playerX - fullEnd.playerX;
+
     await page.mouse.up();
 
-    const afterLeft = await getDebugState(page);
-    expect(afterLeft.playerX).toBeLessThan(afterRight.playerX - 20);
+    expect(halfDelta).toBeGreaterThan(15);
+    expect(fullDelta).toBeGreaterThan(45);
+    expect(halfDelta).toBeLessThan(fullDelta * 0.75);
+    expect(halfDelta).toBeGreaterThan(fullDelta * 0.25);
   });
 
-  test('9. joystick activates only on left half and ignores second pointer down/up', async ({
+  test('9. joystick activates only on left half and ignores second finger sequence', async ({
     page,
     browser,
   }) => {
@@ -368,29 +388,164 @@ test.describe('Night Alley pixel visuals & controls', () => {
       const tBox = await touchPage.locator('canvas').boundingBox();
       expect(tBox).not.toBeNull();
 
-      const startDragX = tBox!.x + (180 / 960) * tBox!.width;
-      const moveDragX = tBox!.x + (260 / 960) * tBox!.width;
-      const dragY = tBox!.y + (300 / 540) * tBox!.height;
-      const tapX = tBox!.x + (320 / 960) * tBox!.width;
-      const tapY = dragY;
+      const cdp = await touchContext.newCDPSession(touchPage);
+      const x1 = tBox!.x + 180;
+      const y1 = tBox!.y + 300;
+      const x2 = tBox!.x + 420;
+      const y2 = tBox!.y + 300;
+
+      const finger1 = { x: x1, y: y1, id: 1 };
+      const finger1Right = { x: x1 + 80, y: y1, id: 1 };
+      const finger1Down = { x: x1 + 80, y: y1 + 140, id: 1 };
+      const finger2 = { x: x2, y: y2, id: 2 };
+      const finger2Moved = { x: x2 - 120, y: y2 - 120, id: 2 };
 
       const start = await getDebugState(touchPage);
-      await touchPage.mouse.move(startDragX, dragY);
-      await touchPage.mouse.down();
-      await touchPage.mouse.move(moveDragX, dragY, { steps: 6 });
+
+      // 1. Finger 1 presses left half and drags right.
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [finger1],
+      });
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [finger1Right],
+      });
       await touchPage.waitForTimeout(250);
 
       const mid1 = await getDebugState(touchPage);
       expect(mid1.playerX).toBeGreaterThan(start.playerX + 15);
 
-      await touchPage.touchscreen.tap(tapX, tapY);
-      await touchPage.waitForTimeout(400);
+      // 2. Finger 2 presses, moves, and lifts while finger 1 holds right.
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [finger1Right, finger2],
+      });
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [finger1Right, finger2Moved],
+      });
+      await touchPage.waitForTimeout(250);
 
       const mid2 = await getDebugState(touchPage);
-      await touchPage.mouse.up();
-      expect(mid2.playerX).toBeGreaterThan(mid1.playerX + 30);
+      expect(mid2.playerX).toBeGreaterThan(mid1.playerX + 15);
+      expect(Math.abs(mid2.playerY - mid1.playerY)).toBeLessThan(5);
+
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchEnd',
+        touchPoints: [finger2Moved],
+      });
+      await touchPage.waitForTimeout(200);
+
+      const mid3 = await getDebugState(touchPage);
+      expect(mid3.playerX).toBeGreaterThan(mid2.playerX + 10);
+
+      // 3. Finger 1 steers down and still controls direction.
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [finger1Down],
+      });
+      await touchPage.waitForTimeout(350);
+
+      const afterDown = await getDebugState(touchPage);
+      expect(afterDown.playerY).toBeGreaterThan(mid3.playerY + 25);
+
+      // 4. Finger 1 releases -> velocity returns to zero.
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchEnd',
+        touchPoints: [finger1Down],
+      });
+      const atRelease = await getDebugState(touchPage);
+      await touchPage.waitForTimeout(250);
+      const afterRelease = await getDebugState(touchPage);
+
+      expect(Math.abs(afterRelease.playerX - atRelease.playerX)).toBeLessThan(1);
+      expect(Math.abs(afterRelease.playerY - atRelease.playerY)).toBeLessThan(1);
     } finally {
       await touchContext.close();
     }
+  });
+
+  test('10. mouse drag continues updating direction after leaving canvas', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 720 });
+    await startGame(page);
+
+    const box = await page.locator('canvas').boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(40);
+
+    const startX = box!.x + 80;
+    const startY = box!.y + box!.height * 0.65;
+    const outsideX = box!.x - 40;
+    const upY = box!.y + 40;
+
+    const before = await getDebugState(page);
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(outsideX, startY, { steps: 8 });
+    await page.waitForTimeout(350);
+
+    const afterLeft = await getDebugState(page);
+    expect(afterLeft.playerX).toBeLessThan(before.playerX - 20);
+
+    await page.mouse.move(outsideX, upY, { steps: 10 });
+    await page.waitForTimeout(450);
+
+    const afterUp = await getDebugState(page);
+    expect(afterUp.playerY).toBeLessThan(afterLeft.playerY - 30);
+
+    await page.mouse.up();
+    const atRelease = await getDebugState(page);
+    await page.waitForTimeout(250);
+    const afterRelease = await getDebugState(page);
+
+    expect(Math.abs(afterRelease.playerX - atRelease.playerX)).toBeLessThan(1);
+    expect(Math.abs(afterRelease.playerY - atRelease.playerY)).toBeLessThan(1);
+  });
+
+  test('11. 390px portrait viewport preserves CSS-pixel deadzone and proportional speed', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await startGame(page);
+
+    const box = await page.locator('canvas').boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeLessThanOrEqual(390);
+    expect(box!.width).toBeGreaterThan(380);
+
+    const startX = box!.x + 80;
+    const startY = box!.y + box!.height * 0.55;
+
+    const measureCssDrag = async (cssDx: number, holdMs: number): Promise<number> => {
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      await page.mouse.move(startX + cssDx, startY, { steps: 6 });
+      const before = await getDebugState(page);
+      await page.waitForTimeout(holdMs);
+      const after = await getDebugState(page);
+      await page.mouse.up();
+      return after.playerX - before.playerX;
+    };
+
+    // 5 CSS px (< 7 CSS px deadzone) corresponds to ~12.3 game px, proving GameScene scales deadzone.
+    const deadzoneDelta = await measureCssDrag(5, 450);
+    expect(Math.abs(deadzoneDelta)).toBeLessThan(0.5);
+
+    // 28.5 CSS px (50% of 7..50 range) corresponds to ~70.2 game px, proving radius scales beyond 50.
+    const halfDelta = await measureCssDrag(28.5, 550);
+    const fullDelta = await measureCssDrag(60, 550);
+
+    expect(halfDelta).toBeGreaterThan(20);
+    expect(fullDelta).toBeGreaterThan(55);
+    expect(halfDelta).toBeLessThan(fullDelta * 0.75);
+    expect(halfDelta).toBeGreaterThan(fullDelta * 0.25);
   });
 });

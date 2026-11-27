@@ -142,6 +142,7 @@ export class GameScene extends Phaser.Scene {
   private dragCurrentX = 0;
   private dragCurrentY = 0;
   private joystickAlpha = 0;
+  private windowMouseMoveHandler: ((event: MouseEvent) => void) | null = null;
 
   private isLevelUpOpen = false;
   private activeChoices: DebugChoiceInfo[] = [];
@@ -292,6 +293,27 @@ export class GameScene extends Phaser.Scene {
     return computeJoystickDimensions(displayWidth / ARENA_WIDTH);
   }
 
+  private updateDragPosition(x: number, y: number): void {
+    this.dragCurrentX = x;
+    this.dragCurrentY = y;
+    const nextOrigin = followJoystickBase(
+      this.dragOriginX,
+      this.dragOriginY,
+      this.dragCurrentX,
+      this.dragCurrentY,
+      this.getJoystickDimensions().maxDistance,
+    );
+    this.dragOriginX = nextOrigin.x;
+    this.dragOriginY = nextOrigin.y;
+  }
+
+  private removeWindowMouseMove(): void {
+    if (this.windowMouseMoveHandler) {
+      window.removeEventListener('mousemove', this.windowMouseMoveHandler);
+      this.windowMouseMoveHandler = null;
+    }
+  }
+
   private setupInputs(): void {
     if (this.input.manager.pointersTotal < 3) {
       this.input.addPointer(3 - this.input.manager.pointersTotal);
@@ -330,18 +352,31 @@ export class GameScene extends Phaser.Scene {
       if (!this.isDragging || pointer.id !== this.activeDragPointerId) {
         return;
       }
-      this.dragCurrentX = pointer.x;
-      this.dragCurrentY = pointer.y;
-      const nextOrigin = followJoystickBase(
-        this.dragOriginX,
-        this.dragOriginY,
-        this.dragCurrentX,
-        this.dragCurrentY,
-        this.getJoystickDimensions().maxDistance,
-      );
-      this.dragOriginX = nextOrigin.x;
-      this.dragOriginY = nextOrigin.y;
+      this.updateDragPosition(pointer.x, pointer.y);
     });
+
+    this.removeWindowMouseMove();
+    this.windowMouseMoveHandler = (event: MouseEvent): void => {
+      if (!this.isDragging || this.isLevelUpOpen || this.ended) {
+        return;
+      }
+      if (!this.input.mousePointer || this.activeDragPointerId !== this.input.mousePointer.id) {
+        return;
+      }
+      if (event.target === this.game.canvas) {
+        return;
+      }
+      const rect = this.game.canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+      const gameX = ((event.clientX - rect.left) / rect.width) * ARENA_WIDTH;
+      const gameY = ((event.clientY - rect.top) / rect.height) * ARENA_HEIGHT;
+      this.updateDragPosition(gameX, gameY);
+    };
+    window.addEventListener('mousemove', this.windowMouseMoveHandler, { passive: true });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.removeWindowMouseMove, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.removeWindowMouseMove, this);
 
     const stopDrag = (pointer: Phaser.Input.Pointer): void => {
       if (!this.isDragging || pointer.id !== this.activeDragPointerId) {

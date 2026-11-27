@@ -943,14 +943,14 @@ export class GameScene extends Phaser.Scene {
     this.levelText.setText(`Lv.${this.level}`);
     const needed = xpNeededForLevel(this.level);
     const xpRatio = Phaser.Math.Clamp(this.xp / needed, 0, 1);
-    this.xpBarFill.width = 120 * xpRatio;
+    this.xpBarFill.setSize(120 * xpRatio, 14);
     this.killsText.setText(`击杀 ${this.kills}`);
 
     const loadout = WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id]))
       .map((id) => `${WEAPON_DEFS[id].name} Lv.${this.stats.weapons[id]!.level}`)
       .join(' · ');
     this.loadoutText.setText(loadout);
-    this.loadoutBg.width = Math.max(120, Math.round(this.loadoutText.width) + 18);
+    this.loadoutBg.setSize(Math.max(120, Math.round(this.loadoutText.width) + 18), 30);
   }
 
   private renderWorld(): void {

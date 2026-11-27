@@ -91,4 +91,14 @@ describe('pixelFont glyph coverage', () => {
     expect(lines.length).toBeGreaterThan(1);
     expect(lines.join('')).toContain('铜钱镖');
   });
+
+  it('keeps numeric and +number tokens intact when wrapping', () => {
+    const wrapped = wrapPixelText('血量上限 +10 并回复 10', 256, 24);
+    expect(wrapped.split('\n')).toEqual(['血量上限 +10 并回复', '10']);
+
+    const wrappedPlus = wrapPixelText('血量上限 +10 并回复 10', 136, 24);
+    const plusLines = wrappedPlus.split('\n');
+    expect(plusLines[0]).toBe('血量上限');
+    expect(plusLines[1].startsWith('+10')).toBe(true);
+  });
 });

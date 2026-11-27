@@ -177,24 +177,39 @@ test.describe('Night Alley pixel visuals & controls', () => {
     page,
   }) => {
     await startGame(page);
-    const before = await getDebugState(page);
 
     const box = await page.locator('canvas').boundingBox();
     expect(box).not.toBeNull();
 
     const startX = box!.x + (300 / 960) * box!.width;
     const startY = box!.y + (300 / 540) * box!.height;
-    const endX = box!.x + (360 / 960) * box!.width;
-    const endY = startY;
 
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
-    await page.mouse.move(endX, endY, { steps: 6 });
-    await page.waitForTimeout(800);
-    await page.mouse.up();
+    const measureHorizontalDrag = async (logicalDx: number): Promise<number> => {
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      const before = await getDebugState(page);
+      const endX = box!.x + ((300 + logicalDx) / 960) * box!.width;
 
-    const after = await getDebugState(page);
-    expect(after.playerX).toBeGreaterThan(before.playerX + 40);
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      await page.mouse.move(endX, startY, { steps: 6 });
+      await page.waitForTimeout(800);
+      await page.mouse.up();
+
+      const after = await getDebugState(page);
+      return after.playerX - before.playerX;
+    };
+
+    const fullDelta = await measureHorizontalDrag(60);
+    const halfDelta = await measureHorizontalDrag(32);
+
+    expect(fullDelta).toBeGreaterThan(40);
+    expect(halfDelta).toBeGreaterThan(10);
+    expect(halfDelta).toBeLessThan(fullDelta * 0.8);
   });
 
   test('7. peach sword slash arc stays pinned at swing-time position while player moves', async ({

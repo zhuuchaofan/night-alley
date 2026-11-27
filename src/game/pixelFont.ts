@@ -172,19 +172,23 @@ export function wrapPixelText(
     let line = '';
     let lineWidth = 0;
 
-    for (const ch of para) {
-      const adv = (fontJson.glyphs[ch]?.advance ?? fontJson.size) * scale;
+    const tokens = para.match(/\+?\d+%?|[\s\S]/gu) ?? [];
+    for (const token of tokens) {
+      let adv = 0;
+      for (const ch of token) {
+        adv += (fontJson.glyphs[ch]?.advance ?? fontJson.size) * scale;
+      }
       if (line.length > 0 && lineWidth + adv > maxPx) {
         wrappedLines.push(line.trimEnd());
-        if (ch === ' ') {
+        if (token === ' ') {
           line = '';
           lineWidth = 0;
           continue;
         }
-        line = ch;
+        line = token;
         lineWidth = adv;
       } else {
-        line += ch;
+        line += token;
         lineWidth += adv;
       }
     }

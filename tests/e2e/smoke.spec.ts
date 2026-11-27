@@ -181,6 +181,10 @@ test.describe('Night Alley pixel visuals & controls', () => {
     const box = await page.locator('canvas').boundingBox();
     expect(box).not.toBeNull();
 
+    const displayScale = box!.width / 960;
+    const logicalRadius = 50 / displayScale;
+    const logicalDeadzone = 7 / displayScale;
+
     const startX = box!.x + (300 / 960) * box!.width;
     const startY = box!.y + (300 / 540) * box!.height;
 
@@ -204,8 +208,10 @@ test.describe('Night Alley pixel visuals & controls', () => {
       return after.playerX - before.playerX;
     };
 
-    const fullDelta = await measureHorizontalDrag(60);
-    const halfDelta = await measureHorizontalDrag(32);
+    const fullDelta = await measureHorizontalDrag(logicalRadius + 10);
+    const halfDelta = await measureHorizontalDrag(
+      logicalDeadzone + (logicalRadius - logicalDeadzone) * 0.5,
+    );
 
     expect(fullDelta).toBeGreaterThan(40);
     expect(halfDelta).toBeGreaterThan(10);
@@ -287,6 +293,104 @@ test.describe('Night Alley pixel visuals & controls', () => {
       expect(result.first.slash.displayHeight).toBeGreaterThan(150);
     } finally {
       await page.keyboard.up('KeyD');
+    }
+  });
+
+  test('8. follow-base lets player reverse direction immediately after dragging past radius', async ({
+    page,
+  }) => {
+    await startGame(page);
+
+    const box = await page.locator('canvas').boundingBox();
+    expect(box).not.toBeNull();
+
+    const toClient = (lx: number, ly: number) => ({
+      x: box!.x + (lx / 960) * box!.width,
+      y: box!.y + (ly / 540) * box!.height,
+    });
+
+    const before = await getDebugState(page);
+    const origin = toClient(140, 300);
+    const farRight = toClient(360, 300);
+    const shortBackLeft = toClient(300, 300);
+
+    await page.mouse.move(origin.x, origin.y);
+    await page.mouse.down();
+    await page.mouse.move(farRight.x, farRight.y, { steps: 8 });
+    await page.waitForTimeout(400);
+
+    const afterRight = await getDebugState(page);
+    expect(afterRight.playerX).toBeGreaterThan(before.playerX + 30);
+
+    await page.mouse.move(shortBackLeft.x, shortBackLeft.y, { steps: 6 });
+    await page.waitForTimeout(500);
+    await page.mouse.up();
+
+    const afterLeft = await getDebugState(page);
+    expect(afterLeft.playerX).toBeLessThan(afterRight.playerX - 20);
+  });
+
+  test('9. joystick activates only on left half and ignores second pointer down/up', async ({
+    page,
+    browser,
+  }) => {
+    await startGame(page);
+
+    const box = await page.locator('canvas').boundingBox();
+    expect(box).not.toBeNull();
+
+    const beforeRight = await getDebugState(page);
+    const rightStartX = box!.x + (650 / 960) * box!.width;
+    const rightEndX = box!.x + (750 / 960) * box!.width;
+    const midY = box!.y + (300 / 540) * box!.height;
+
+    await page.mouse.move(rightStartX, midY);
+    await page.mouse.down();
+    await page.mouse.move(rightEndX, midY, { steps: 6 });
+    await page.waitForTimeout(500);
+    await page.mouse.up();
+
+    const afterRight = await getDebugState(page);
+    expect(Math.abs(afterRight.playerX - beforeRight.playerX)).toBeLessThan(1);
+    expect(Math.abs(afterRight.playerY - beforeRight.playerY)).toBeLessThan(1);
+
+    const touchContext = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      hasTouch: true,
+    });
+    try {
+      const touchPage = await touchContext.newPage();
+      touchPage.on('pageerror', (err) => {
+        throw err;
+      });
+      await startGame(touchPage);
+
+      const tBox = await touchPage.locator('canvas').boundingBox();
+      expect(tBox).not.toBeNull();
+
+      const startDragX = tBox!.x + (180 / 960) * tBox!.width;
+      const moveDragX = tBox!.x + (260 / 960) * tBox!.width;
+      const dragY = tBox!.y + (300 / 540) * tBox!.height;
+      const tapX = tBox!.x + (320 / 960) * tBox!.width;
+      const tapY = dragY;
+
+      const start = await getDebugState(touchPage);
+      await touchPage.mouse.move(startDragX, dragY);
+      await touchPage.mouse.down();
+      await touchPage.mouse.move(moveDragX, dragY, { steps: 6 });
+      await touchPage.waitForTimeout(250);
+
+      const mid1 = await getDebugState(touchPage);
+      expect(mid1.playerX).toBeGreaterThan(start.playerX + 15);
+
+      await touchPage.touchscreen.tap(tapX, tapY);
+      await touchPage.waitForTimeout(400);
+
+      const mid2 = await getDebugState(touchPage);
+      await touchPage.mouse.up();
+      expect(mid2.playerX).toBeGreaterThan(mid1.playerX + 30);
+    } finally {
+      await touchContext.close();
     }
   });
 });

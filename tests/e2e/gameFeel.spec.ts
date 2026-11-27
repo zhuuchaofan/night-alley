@@ -286,6 +286,7 @@ test.describe('Night Alley game feel (stage 2)', () => {
           let sawScattering = false;
           let maxLogicalDrift = 0;
           let maxVisualOffset = 0;
+          let candidateScattered = false;
 
           const step = (): void => {
             const state = dbg.getState();
@@ -300,6 +301,26 @@ test.describe('Night Alley game feel (stage 2)', () => {
             }
 
             if (sawKill && gf.orbs.length > 0) {
+              // Sample the visual scatter offset from ANY scattering orb, not
+              // only the tracked candidate below: a single orb's scatter
+              // peaks mid-flight (~0.12s into a 0.24s flight), but the
+              // candidate only becomes observable once the player has walked
+              // >65px away (~0.22s in), when the offset has already decayed
+              // near the 2px threshold. Sampling only the candidate made this
+              // assertion a coin flip (failed 1/3 runs on main @ 02f71e0,
+              // pre-existing flake, not a stage-5 regression). The logical
+              // drift check still uses only the candidate outside pickup
+              // range, where the magnet cannot move it.
+              for (const orb of gf.orbs) {
+                if (orb.scattering) {
+                  sawScattering = true;
+                  maxVisualOffset = Math.max(
+                    maxVisualOffset,
+                    Math.hypot(orb.renderX - orb.x, orb.renderY - orb.y),
+                  );
+                }
+              }
+
               const candidate =
                 initialX === null
                   ? gf.orbs.find(
@@ -322,12 +343,8 @@ test.describe('Night Alley game feel (stage 2)', () => {
                     Math.hypot(candidate.x - initialX, candidate.y - initialY),
                   );
                   if (candidate.scattering) {
-                    sawScattering = true;
-                    maxVisualOffset = Math.max(
-                      maxVisualOffset,
-                      Math.hypot(candidate.renderX - candidate.x, candidate.renderY - candidate.y),
-                    );
-                  } else if (sawScattering) {
+                    candidateScattered = true;
+                  } else if (candidateScattered) {
                     resolve({
                       sawKill,
                       sawScattering,

@@ -159,6 +159,7 @@ const CHOICE_CARD_H = 210;
 const CATEGORY_LABEL: Record<ChoiceOption['category'], { text: string; color: string }> = {
   new_weapon: { text: '新武器', color: PALETTE.lanternYellow },
   weapon_upgrade: { text: '武器强化', color: PALETTE.silverBlue },
+  evolution: { text: '武器进化', color: PALETTE.lanternYellow },
   stat: { text: '属性提升', color: PALETTE.jadeGreen },
 };
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createInitialPlayerStats,
   createInitialWeapon,
+  EVOLUTION_MIN_LEVEL,
   WEAPON_DEFS,
   WEAPON_ORDER,
 } from '../../src/game/balance.ts';
@@ -17,10 +18,19 @@ const TOFU_BOX_12 = [
 function collectAllGameUiStrings(): string[] {
   const start = createInitialPlayerStats();
   const full = createInitialPlayerStats();
+  const readyToEvolve = createInitialPlayerStats();
   for (const id of WEAPON_ORDER) {
     full.weapons[id] = createInitialWeapon(id);
+    readyToEvolve.weapons[id] = {
+      ...createInitialWeapon(id),
+      level: EVOLUTION_MIN_LEVEL,
+    };
   }
-  const choices = [...buildChoicePool(start), ...buildChoicePool(full)];
+  const choices = [
+    ...buildChoicePool(start),
+    ...buildChoicePool(full),
+    ...buildChoicePool(readyToEvolve),
+  ];
 
   return [
     // TitleScene
@@ -42,6 +52,7 @@ function collectAllGameUiStrings(): string[] {
     '点击一项强化以继续守夜',
     '新武器',
     '武器强化',
+    '武器进化',
     '属性提升',
     ...choices.flatMap((c) => [c.title, c.description]),
     // GameOverScene

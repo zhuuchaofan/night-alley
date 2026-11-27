@@ -7,11 +7,11 @@
 - 引擎位于 [`scripts/sim/sim.ts`](./sim.ts)，直接复用 [`src/game/balance.ts`](../../src/game/balance.ts) 与 [`src/game/choices.ts`](../../src/game/choices.ts) 的全部常量、公式与三选一池，不复制数值。
 - 固定时间步长 `dt = 1 / 30`（30 Hz），单局上限 `ROUND_DURATION_SECONDS = 180s`（5400 tick）。
 - 严格镜像 `src/scenes/GameScene.ts` 的逻辑顺序与数值：
-  - 刷怪间隔 `spawnIntervalAt`、怪物属性 `enemyStatsAt`、同场上限 `MAX_ENEMIES = 60`、四边 `SPAWN_MARGIN = 30` 出生。
+  - 刷怪间隔 `spawnIntervalAt`、怪物属性 `enemyStatsAt`、同场普通怪上限 `MAX_ENEMIES = 65`（Boss 不占名额）、四边 `SPAWN_MARGIN = 30` 出生。
   - 敌人直线追击玩家；接触伤害 `2`、每怪独立 `0.5s` 冷却、触碰距离 `PLAYER_RADIUS (12) + ENEMY_RADIUS (10) = 22`。
   - 三武器逻辑与冷却：桃木剑（0.8s / 范围 90 / 弧度 100° / 伤害 6）、铜钱镖（1.2s / 范围 320 / 伤害 5 / 弹速 420 / 命中半径 5+10）、灯笼火（2.0s 冷却 / 持续 2.0s / 每 0.5s 一跳 / 每跳 1.5 / 范围 90；解锁瞬间立即激活首轮持续时间）。
   - 杀敌掉落 1 颗经验珠；`pickupRadius` 内以 `420` 速度吸附，进入 `18` 距离拾取并按 `xpNeededForLevel` 升级；升级用 `generateChoices(stats, rng)` 抽三张并瞬间完成选择（等价于真实游戏升级弹窗暂停计时）。
-- **敌人推离实现选择**：采用 **24px 均匀空间网格（Uniform Spatial Grid）** 精确实现与 `GameScene.ts` 相同的 `20px` 最小间距两两推离，而非“同时接触攻击者上限 6 只”的近似。原因：`CELL_SIZE = 24 > 20 = ENEMY_RADIUS * 2`，遍历 3×3 邻格即可在 $O(n)$ 平均复杂度内完整覆盖所有间距小于 20px 的怪物对，且预分配 `Int16Array` 链表保证零每帧内存分配，既保持数值完全保真又兼顾 200 局批跑速度。
+- **敌人推离实现选择**：采用 **48px 均匀空间网格（Uniform Spatial Grid）** 精确实现与 `GameScene.ts` 相同的按怪半径之和最小间距两两推离，而非“同时接触攻击者上限 6 只”的近似。原因：`CELL_SIZE = 48` 覆盖最大的 Boss+Boss 间距（`24 + 24`），遍历 3×3 邻格即可在 $O(n)$ 平均复杂度内完整覆盖所有间距小于半径之和的怪物对，且预分配 `Int16Array` 链表保证零每帧内存分配，既保持数值完全保真又兼顾 200 局批跑速度。
 
 ## 模拟策略（典型玩家行为）
 

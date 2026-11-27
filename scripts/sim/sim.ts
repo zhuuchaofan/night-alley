@@ -4,9 +4,9 @@
  * Mirrors the core loop in `src/scenes/GameScene.ts` without Phaser:
  * - Fixed tick `dt = 1 / 30` (30 Hz) over `ROUND_DURATION_SECONDS` (180s = 5400 ticks).
  * - Exact constants/formulas imported from `src/game/balance.ts` and `src/game/choices.ts`.
- * - Enemy separation (20px min distance): uses a 24px uniform spatial hash grid
- *   instead of the 6-attacker contact cap approximation. Because `CELL_SIZE = 24 > 20 = ENEMY_RADIUS * 2`,
- *   checking the 3x3 neighborhood guarantees exact pairwise separation parity with `GameScene.ts`
+ * - Enemy separation (per-enemy radius sum as min distance): uses a 48px uniform spatial hash grid
+ *   instead of the 6-attacker contact cap approximation. Because `CELL_SIZE = 48` covers the
+ *   largest boss+boss pair distance (24 + 24), checking the 3x3 neighborhood covers every pair
  *   in O(n) average time with zero per-tick allocations.
  *
  * Player movement AI (kiting):
@@ -441,7 +441,14 @@ export function runSingleSim(seed: number): RunResult {
     spawnTimer -= dt;
     while (spawnTimer <= 0) {
       spawnTimer += spawnIntervalAt(elapsedSeconds);
-      if (enemies.length < MAX_ENEMIES) {
+      // The boss never consumes a normal spawn slot (MAX_ENEMIES counts normal enemies only).
+      let normalCount = 0;
+      for (const e of enemies) {
+        if (e.kind !== 'boss') {
+          normalCount += 1;
+        }
+      }
+      if (normalCount < MAX_ENEMIES) {
         const { x, y } = randomEdgePoint();
         const template = enemyStatsAt(elapsedSeconds);
         enemies.push({

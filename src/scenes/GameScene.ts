@@ -460,7 +460,7 @@ export class GameScene extends Phaser.Scene {
         }
       },
       spawnEnemyNearPlayer: () => {
-        if (this.ended || this.enemies.length >= MAX_ENEMIES) {
+        if (this.ended || this.normalEnemyCount() >= MAX_ENEMIES) {
           return;
         }
         const offsetX = this.playerX + 55 <= ARENA_WIDTH - ENEMY_RADIUS ? 55 : -55;
@@ -635,13 +635,24 @@ export class GameScene extends Phaser.Scene {
     this.bossBannerTimer = 0;
   }
 
+  /** Normal (non-boss) enemies on the field; the boss never consumes a normal spawn slot. */
+  private normalEnemyCount(): number {
+    let count = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.kind !== 'boss') {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   private updateSpawning(dt: number): void {
     this.checkBossSpawn();
 
     this.spawnTimer -= dt;
     while (this.spawnTimer <= 0) {
       this.spawnTimer += spawnIntervalAt(this.elapsedSeconds);
-      if (this.enemies.length < MAX_ENEMIES) {
+      if (this.normalEnemyCount() < MAX_ENEMIES) {
         const { x, y } = this.randomEdgeSpawnPoint();
         this.spawnEnemyAt(x, y);
       }

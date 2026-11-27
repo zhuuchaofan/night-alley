@@ -17,7 +17,7 @@ test.describe('Night Alley final boss', () => {
     });
   });
 
-  test('12. Boss 在 150 秒现身、横幅与击杀掉落、撑到 03:00 照样赢', async ({ page }) => {
+  test('12. Boss 在 150 秒现身、撑到 03:00 照样赢', async ({ page }) => {
     await startGame(page);
 
     await page.evaluate(() => {
@@ -59,5 +59,37 @@ test.describe('Night Alley final boss', () => {
     const overState = await getDebugState(page);
     expect(overState.settlement).not.toBeNull();
     expect(overState.settlement!.won).toBe(true);
+  });
+
+  test('13. Boss 不占普通怪 65 上限名额', async ({ page }) => {
+    await startGame(page);
+
+    await page.evaluate(() => {
+      window.__NIGHT_ALLEY_DEBUG__?.setTimeLeft(31);
+    });
+
+    await page.waitForFunction(
+      () => {
+        const s = window.__NIGHT_ALLEY_DEBUG__?.getState();
+        return Boolean(s && s.bossSpawned && s.bossAlive);
+      },
+      undefined,
+      { timeout: 6000 },
+    );
+
+    // The debug spawner shares the game's normal-enemy cap: with the boss
+    // alive it must still fill 65 normal enemies, for 66 on the field.
+    // All 70 calls run in one synchronous evaluate, so the sword and the
+    // timed spawner cannot interfere with the count.
+    await page.evaluate(() => {
+      for (let i = 0; i < 70; i += 1) {
+        window.__NIGHT_ALLEY_DEBUG__?.spawnEnemyNearPlayer();
+      }
+    });
+
+    const filled = await getDebugState(page);
+    expect(filled.bossAlive).toBe(true);
+    expect(filled.enemies).toBe(66);
+    expect(filled.maxConcurrent).toBeGreaterThanOrEqual(66);
   });
 });

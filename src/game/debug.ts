@@ -23,6 +23,44 @@ export interface DebugSlashInfo {
   displayHeight: number;
 }
 
+export interface DebugDamageNumberInfo {
+  text: string;
+  x: number;
+  y: number;
+  alpha: number;
+}
+
+export interface DebugEnemyFeelInfo {
+  id: number;
+  x: number;
+  y: number;
+  renderX: number;
+  renderY: number;
+  hitFlash: number;
+  knockbackX: number;
+  knockbackY: number;
+}
+
+export interface DebugOrbFeelInfo {
+  x: number;
+  y: number;
+  renderX: number;
+  renderY: number;
+  scattering: boolean;
+}
+
+export interface DebugGameFeelInfo {
+  playerTexture: string;
+  playerSwinging: boolean;
+  playerSwingAngle: number;
+  playerScreenFlash: number;
+  damageNumbers: DebugDamageNumberInfo[];
+  burstParticles: number;
+  scatteringOrbs: number;
+  orbs: DebugOrbFeelInfo[];
+  enemies: DebugEnemyFeelInfo[];
+}
+
 export interface DebugState {
   scene: 'TitleScene' | 'GameScene' | 'GameOverScene';
   hp: number;
@@ -41,6 +79,7 @@ export interface DebugState {
   bossSpawned: boolean;
   bossAlive: boolean;
   slashes?: DebugSlashInfo[];
+  gameFeel?: DebugGameFeelInfo;
   settlement: SettlementData | null;
 }
 

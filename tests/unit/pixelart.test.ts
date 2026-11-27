@@ -9,7 +9,9 @@ import {
 describe('GAME_PIXEL_ART validation', () => {
   it('every sprite is 32x32, uses <= 12 colors from the 16-color palette, and has visible pixels', () => {
     const entries = Object.entries(GAME_PIXEL_ART);
-    expect(entries.length).toBeGreaterThanOrEqual(15);
+    expect(entries.length).toBeGreaterThanOrEqual(17);
+    expect(GAME_PIXEL_ART).toHaveProperty('player_swing_1');
+    expect(GAME_PIXEL_ART).toHaveProperty('player_swing_2');
 
     for (const [key, rows] of entries) {
       const result = validatePixelRows(rows);

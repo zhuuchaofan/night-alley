@@ -270,6 +270,9 @@ export function ensureGameTextures(scene: Phaser.Scene): void {
   pixelRowsToSilhouetteTexture(scene, 'player_hit', GAME_PIXEL_ART.player_idle, PALETTE.vermilion);
   pixelRowsToSilhouetteTexture(scene, 'enemy_paper_hit', GAME_PIXEL_ART.enemy_paper, PALETTE.paperWhite);
   pixelRowsToSilhouetteTexture(scene, 'enemy_lantern_hit', GAME_PIXEL_ART.enemy_lantern, PALETTE.paperWhite);
+  pixelRowsToSilhouetteTexture(scene, 'enemy_swift_hit', GAME_PIXEL_ART.enemy_swift, PALETTE.paperWhite);
+  pixelRowsToSilhouetteTexture(scene, 'enemy_shooter_hit', GAME_PIXEL_ART.enemy_shooter, PALETTE.paperWhite);
+  pixelRowsToSilhouetteTexture(scene, 'enemy_elite_hit', GAME_PIXEL_ART.enemy_elite, PALETTE.paperWhite);
   pixelRowsToSilhouetteTexture(scene, 'enemy_boss_hit', GAME_PIXEL_ART.enemy_boss, PALETTE.paperWhite);
 }
 

@@ -1,4 +1,4 @@
-import type { WeaponId } from './balance.ts';
+import type { EnemyKind, SpawnEnemyKind, WeaponId } from './balance.ts';
 
 export interface SettlementData {
   won: boolean;
@@ -32,6 +32,7 @@ export interface DebugDamageNumberInfo {
 
 export interface DebugEnemyFeelInfo {
   id: number;
+  kind?: EnemyKind;
   x: number;
   y: number;
   renderX: number;
@@ -70,6 +71,8 @@ export interface DebugState {
   kills: number;
   timeLeft: number;
   enemies: number;
+  enemiesByKind?: Record<string, number>;
+  bolts?: { x: number; y: number }[];
   maxConcurrent: number;
   weapons: WeaponId[];
   evolvedWeapons: WeaponId[];
@@ -91,6 +94,7 @@ export interface NightAlleyDebug {
   setTimeLeft(s: number): void;
   setHp(n: number): void;
   spawnEnemyNearPlayer(): void;
+  spawnEnemyKind?(kind: SpawnEnemyKind, offsetX?: number, offsetY?: number): void;
 }
 
 declare global {

@@ -935,7 +935,7 @@ export class GameScene extends Phaser.Scene {
 
   private updateHud(): void {
     const hpRatio = Phaser.Math.Clamp(this.stats.hp / this.stats.maxHp, 0, 1);
-    this.hpBarFill.width = 110 * hpRatio;
+    this.hpBarFill.setSize(110 * hpRatio, 16);
     this.hpText.setText(`HP ${Math.ceil(this.stats.hp)}/${this.stats.maxHp}`);
 
     this.timerText.setText(formatTime(this.timeLeft));

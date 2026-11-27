@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ENEMY_KINDS,
   formatSimSummary,
   pickUpgradeChoice,
   runSimBatch,
@@ -31,6 +32,14 @@ describe('headless balance sim', () => {
     }
     expect(result.hpTrajectory).toHaveLength(19);
     expect(result.hpTrajectory[0]).toBe(PLAYER_MAX_HP);
+    expect(result.eliteSpawned).toBeGreaterThanOrEqual(0);
+    let kindSum = 0;
+    for (const kind of ENEMY_KINDS) {
+      expect(result.killsByKind).toHaveProperty(kind);
+      expect(result.killsByKind[kind]).toBeGreaterThanOrEqual(0);
+      kindSum += result.killsByKind[kind];
+    }
+    expect(kindSum).toBe(result.kills);
     if (!result.won) {
       const deathIndex = Math.floor(result.survivedSeconds / 10) + 1;
       for (let i = deathIndex; i < result.hpTrajectory.length; i += 1) {
@@ -107,6 +116,14 @@ describe('headless balance sim', () => {
 
     expect(summary.anyEvolutionRate).toBeGreaterThanOrEqual(0);
     expect(summary.anyEvolutionRate).toBeLessThanOrEqual(100);
+    expect(summary.eliteSpawnRate).toBeGreaterThanOrEqual(0);
+    let shareSum = 0;
+    for (const kind of ENEMY_KINDS) {
+      expect(summary.killShareByKind[kind]).toBeGreaterThanOrEqual(0);
+      expect(summary.killShareByKind[kind]).toBeLessThanOrEqual(100);
+      shareSum += summary.killShareByKind[kind];
+    }
+    expect(shareSum).toBeCloseTo(100, 1);
     for (const id of WEAPON_ORDER) {
       expect(summary.evolutionRates[id]).toBeGreaterThanOrEqual(0);
       expect(summary.evolutionRates[id]).toBeLessThanOrEqual(100);
@@ -127,6 +144,8 @@ describe('headless balance sim', () => {
 
     const report = formatSimSummary(summary);
     expect(report).toContain('Win Rate');
+    expect(report).toContain('Elite Spawn Rate');
+    expect(report).toContain('Enemy Kill Share');
     expect(report).toContain('Boss Kill Rate');
     expect(report).toContain('Any Evolution Rate');
     expect(report).toContain(EVOLUTION_DEFS.peach_sword.name);

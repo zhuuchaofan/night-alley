@@ -7,17 +7,27 @@ import {
   BOSS_XP_ORBS,
   createInitialPlayerStats,
   displayWeaponName,
+  ELITE_XP_ORBS,
   ENEMY_RADIUS,
-  enemyStatsAt,
+  type EnemyKind,
+  enemyStatsForKind,
   formatTime,
   HUD_HEIGHT,
   MAX_ENEMIES,
   ORB_PULL_SPEED,
   ORB_RADIUS,
+  pickSpawnKind,
   PLAYER_RADIUS,
   PlayerStats,
   ROUND_DURATION_SECONDS,
+  SHOOTER_BOLT_DAMAGE,
+  SHOOTER_BOLT_RADIUS,
+  SHOOTER_BOLT_SPEED,
+  SHOOTER_FIRE_COOLDOWN,
+  SHOOTER_RANGE,
+  SHOOTER_RETREAT_DIST,
   SPAWN_MARGIN,
+  type SpawnEnemyKind,
   spawnIntervalAt,
   WEAPON_ORDER,
   XP_PER_ORB,
@@ -62,8 +72,6 @@ import {
 import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
 import { computeSlashPlacement } from '../game/slash.ts';
 
-type EnemyKind = 'paper' | 'lantern' | 'boss';
-
 interface EnemyEntity {
   id: number;
   kind: EnemyKind;
@@ -76,9 +84,21 @@ interface EnemyEntity {
   contactDamage: number;
   attackCooldown: number;
   attackCooldownRemaining: number;
+  fireCooldown: number;
+  retreating: boolean;
   hitFlash: number;
   knockbackOffsetX: number;
   knockbackOffsetY: number;
+  sprite: Phaser.GameObjects.Image;
+}
+
+interface EnemyBoltEntity {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  damage: number;
   sprite: Phaser.GameObjects.Image;
 }
 
@@ -188,12 +208,12 @@ export class GameScene extends Phaser.Scene {
   private elapsedSeconds = 0;
   private timeLeft = ROUND_DURATION_SECONDS;
   private maxConcurrent = 0;
-  private enemySpawnCount = 0;
   private nextEnemyId = 1;
   private damageNumberCounter = 0;
   private ended = false;
 
   private enemies: EnemyEntity[] = [];
+  private enemyBolts: EnemyBoltEntity[] = [];
   private orbs: OrbEntity[] = [];
   private darts: DartEntity[] = [];
   private slashes: SlashEffect[] = [];
@@ -296,12 +316,12 @@ export class GameScene extends Phaser.Scene {
     this.elapsedSeconds = 0;
     this.timeLeft = ROUND_DURATION_SECONDS;
     this.maxConcurrent = 0;
-    this.enemySpawnCount = 0;
     this.nextEnemyId = 1;
     this.damageNumberCounter = 0;
     this.ended = false;
 
     this.enemies = [];
+    this.enemyBolts = [];
     this.orbs = [];
     this.darts = [];
     this.slashes = [];
@@ -491,74 +511,99 @@ export class GameScene extends Phaser.Scene {
 
   private registerSceneDebugHook(): void {
     registerDebugHook({
-      getState: () => ({
-        scene: 'GameScene',
-        hp: Math.round(this.stats.hp * 100) / 100,
-        maxHp: this.stats.maxHp,
-        level: this.level,
-        xp: this.xp,
-        kills: this.kills,
-        timeLeft: Math.round(this.timeLeft * 1000) / 1000,
-        enemies: this.enemies.length,
-        maxConcurrent: this.maxConcurrent,
-        weapons: WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id])),
-        evolvedWeapons: WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id]?.evolved)),
-        loadoutText: this.loadoutText.text,
-        playerX: Math.round(this.playerX * 100) / 100,
-        playerY: Math.round(this.playerY * 100) / 100,
-        isLevelUpOpen: this.isLevelUpOpen,
-        levelUpChoices: this.activeChoices.map((c) => ({ ...c })),
-        bossSpawned: this.bossSpawned,
-        bossAlive: this.enemies.some((enemy) => enemy.kind === 'boss'),
-        slashes: this.slashes.map((slash) => ({
-          x: Math.round(slash.sprite.x * 100) / 100,
-          y: Math.round(slash.sprite.y * 100) / 100,
-          rotation: Math.round(slash.sprite.rotation * 10000) / 10000,
-          displayWidth: Math.round(slash.sprite.displayWidth * 100) / 100,
-          displayHeight: Math.round(slash.sprite.displayHeight * 100) / 100,
-        })),
-        gameFeel: {
-          playerTexture: this.playerSprite?.texture.key ?? 'player_idle',
-          playerSwinging: this.playerSwingTimer > 0,
-          playerSwingAngle: Math.round(this.playerSwingAngle * 10000) / 10000,
-          playerScreenFlash: Math.round(this.playerScreenFlash * 1000) / 1000,
-          damageNumbers: this.damageNumbers.map((dn) => ({
-            text: dn.text.text,
-            x: Math.round(dn.x * 100) / 100,
-            y: Math.round(dn.y * 100) / 100,
-            alpha: Math.round(dn.text.alpha * 1000) / 1000,
+      getState: () => {
+        const enemiesByKind: Record<string, number> = {
+          paper: 0,
+          lantern: 0,
+          swift: 0,
+          shooter: 0,
+          elite: 0,
+          boss: 0,
+        };
+        for (const enemy of this.enemies) {
+          enemiesByKind[enemy.kind] = (enemiesByKind[enemy.kind] ?? 0) + 1;
+        }
+        return {
+          scene: 'GameScene',
+          hp: Math.round(this.stats.hp * 100) / 100,
+          maxHp: this.stats.maxHp,
+          level: this.level,
+          xp: this.xp,
+          kills: this.kills,
+          timeLeft: Math.round(this.timeLeft * 1000) / 1000,
+          enemies: this.enemies.length,
+          enemiesByKind,
+          bolts: this.enemyBolts.map((b) => ({
+            x: Math.round(b.x * 100) / 100,
+            y: Math.round(b.y * 100) / 100,
           })),
-          burstParticles: this.burstParticles.length,
-          scatteringOrbs: this.orbs.filter((orb) => orb.scatterTimer > 0).length,
-          orbs: this.orbs.map((orb) => ({
-            x: Math.round(orb.x * 100) / 100,
-            y: Math.round(orb.y * 100) / 100,
-            renderX: Math.round(orb.sprite.x * 100) / 100,
-            renderY: Math.round(orb.sprite.y * 100) / 100,
-            scattering: orb.scatterTimer > 0,
+          maxConcurrent: this.maxConcurrent,
+          weapons: WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id])),
+          evolvedWeapons: WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id]?.evolved)),
+          loadoutText: this.loadoutText.text,
+          playerX: Math.round(this.playerX * 100) / 100,
+          playerY: Math.round(this.playerY * 100) / 100,
+          isLevelUpOpen: this.isLevelUpOpen,
+          levelUpChoices: this.activeChoices.map((c) => ({ ...c })),
+          bossSpawned: this.bossSpawned,
+          bossAlive: this.enemies.some((enemy) => enemy.kind === 'boss'),
+          slashes: this.slashes.map((slash) => ({
+            x: Math.round(slash.sprite.x * 100) / 100,
+            y: Math.round(slash.sprite.y * 100) / 100,
+            rotation: Math.round(slash.sprite.rotation * 10000) / 10000,
+            displayWidth: Math.round(slash.sprite.displayWidth * 100) / 100,
+            displayHeight: Math.round(slash.sprite.displayHeight * 100) / 100,
           })),
-          enemies: this.enemies.map((enemy) => {
-            const renderPos = computeClampedRenderPos(
-              enemy.x,
-              enemy.y,
-              enemy.knockbackOffsetX,
-              enemy.knockbackOffsetY,
-              enemy.kind === 'boss' ? BOSS_RENDER_HALF_WIDTH : ENEMY_RENDER_HALF_WIDTH,
-            );
-            return {
-              id: enemy.id,
-              x: Math.round(enemy.x * 100) / 100,
-              y: Math.round(enemy.y * 100) / 100,
-              renderX: Math.round(renderPos.x * 100) / 100,
-              renderY: Math.round(renderPos.y * 100) / 100,
-              hitFlash: Math.round(enemy.hitFlash * 1000) / 1000,
-              knockbackX: Math.round(enemy.knockbackOffsetX * 100) / 100,
-              knockbackY: Math.round(enemy.knockbackOffsetY * 100) / 100,
-            };
-          }),
-        },
-        settlement: null,
-      }),
+          gameFeel: {
+            playerTexture: this.playerSprite?.texture.key ?? 'player_idle',
+            playerSwinging: this.playerSwingTimer > 0,
+            playerSwingAngle: Math.round(this.playerSwingAngle * 10000) / 10000,
+            playerScreenFlash: Math.round(this.playerScreenFlash * 1000) / 1000,
+            damageNumbers: this.damageNumbers.map((dn) => ({
+              text: dn.text.text,
+              x: Math.round(dn.x * 100) / 100,
+              y: Math.round(dn.y * 100) / 100,
+              alpha: Math.round(dn.text.alpha * 1000) / 1000,
+            })),
+            burstParticles: this.burstParticles.length,
+            scatteringOrbs: this.orbs.filter((orb) => orb.scatterTimer > 0).length,
+            orbs: this.orbs.map((orb) => ({
+              x: Math.round(orb.x * 100) / 100,
+              y: Math.round(orb.y * 100) / 100,
+              renderX: Math.round(orb.sprite.x * 100) / 100,
+              renderY: Math.round(orb.sprite.y * 100) / 100,
+              scattering: orb.scatterTimer > 0,
+            })),
+            enemies: this.enemies.map((enemy) => {
+              const halfWidth =
+                enemy.kind === 'boss'
+                  ? BOSS_RENDER_HALF_WIDTH
+                  : enemy.kind === 'elite'
+                    ? 44
+                    : ENEMY_RENDER_HALF_WIDTH;
+              const renderPos = computeClampedRenderPos(
+                enemy.x,
+                enemy.y,
+                enemy.knockbackOffsetX,
+                enemy.knockbackOffsetY,
+                halfWidth,
+              );
+              return {
+                id: enemy.id,
+                kind: enemy.kind,
+                x: Math.round(enemy.x * 100) / 100,
+                y: Math.round(enemy.y * 100) / 100,
+                renderX: Math.round(renderPos.x * 100) / 100,
+                renderY: Math.round(renderPos.y * 100) / 100,
+                hitFlash: Math.round(enemy.hitFlash * 1000) / 1000,
+                knockbackX: Math.round(enemy.knockbackOffsetX * 100) / 100,
+                knockbackY: Math.round(enemy.knockbackOffsetY * 100) / 100,
+              };
+            }),
+          },
+          settlement: null,
+        };
+      },
       addXp: (n: number) => {
         if (!this.ended && n > 0) {
           this.gainXp(n);
@@ -597,6 +642,20 @@ export class GameScene extends Phaser.Scene {
         this.spawnEnemyAt(this.playerX + offsetX, this.playerY);
         this.renderWorld();
       },
+      spawnEnemyKind: (kind: SpawnEnemyKind, offsetX?: number, offsetY = 0) => {
+        if (this.ended || this.normalEnemyCount() >= MAX_ENEMIES) {
+          return;
+        }
+        const dx = offsetX ?? (this.playerX + 55 <= ARENA_WIDTH - ENEMY_RADIUS ? 55 : -55);
+        const sx = Phaser.Math.Clamp(this.playerX + dx, ENEMY_RADIUS, ARENA_WIDTH - ENEMY_RADIUS);
+        const sy = Phaser.Math.Clamp(
+          this.playerY + offsetY,
+          HUD_HEIGHT + ENEMY_RADIUS,
+          ARENA_HEIGHT - ENEMY_RADIUS,
+        );
+        this.spawnEnemyAt(sx, sy, kind);
+        this.renderWorld();
+      },
     });
   }
 
@@ -618,6 +677,10 @@ export class GameScene extends Phaser.Scene {
       this.updatePlayerMovement(dt);
       this.updateSpawning(dt);
       this.updateEnemies(dt);
+      if (this.ended) {
+        return;
+      }
+      this.updateEnemyBolts(dt);
       if (this.ended) {
         return;
       }
@@ -733,6 +796,8 @@ export class GameScene extends Phaser.Scene {
       contactDamage: BOSS_STATS.contactDamage,
       attackCooldown: BOSS_STATS.attackCooldown,
       attackCooldownRemaining: 0,
+      fireCooldown: 0,
+      retreating: false,
       hitFlash: 0,
       knockbackOffsetX: 0,
       knockbackOffsetY: 0,
@@ -795,13 +860,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private spawnEnemyAt(x: number, y: number): void {
-    const template = enemyStatsAt(this.elapsedSeconds);
-    const kind: EnemyKind = this.enemySpawnCount % 3 === 1 ? 'lantern' : 'paper';
-    this.enemySpawnCount += 1;
-
-    const texKey = kind === 'lantern' ? 'enemy_lantern' : 'enemy_paper';
-    const sprite = this.add.image(x, y, texKey).setDepth(9);
+  private spawnEnemyAt(x: number, y: number, forcedKind?: SpawnEnemyKind): void {
+    const kind: SpawnEnemyKind = forcedKind ?? pickSpawnKind(this.elapsedSeconds, Math.random());
+    const template = enemyStatsForKind(kind, this.elapsedSeconds);
+    const texKey = `enemy_${kind}`;
+    const displaySize = kind === 'elite' ? 88 : 64;
+    const sprite = this.add.image(x, y, texKey).setDisplaySize(displaySize, displaySize).setDepth(9);
 
     this.enemies.push({
       id: this.nextEnemyId++,
@@ -815,6 +879,8 @@ export class GameScene extends Phaser.Scene {
       contactDamage: template.contactDamage,
       attackCooldown: template.attackCooldown,
       attackCooldownRemaining: 0,
+      fireCooldown: kind === 'shooter' ? 0.5 : 0,
+      retreating: false,
       hitFlash: 0,
       knockbackOffsetX: 0,
       knockbackOffsetY: 0,
@@ -827,13 +893,63 @@ export class GameScene extends Phaser.Scene {
 
   private updateEnemies(dt: number): void {
     for (const enemy of this.enemies) {
-      const dx = this.playerX - enemy.x;
-      const dy = this.playerY - enemy.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 0.001) {
+      let dx = this.playerX - enemy.x;
+      let dy = this.playerY - enemy.y;
+      let dist = Math.hypot(dx, dy);
+
+      if (enemy.kind === 'shooter') {
+        if (dist < SHOOTER_RETREAT_DIST) {
+          enemy.retreating = true;
+        } else if (dist >= SHOOTER_RANGE) {
+          enemy.retreating = false;
+        }
+
+        if (enemy.retreating) {
+          const rx = dist > 0.001 ? -dx / dist : 1;
+          const ry = dist > 0.001 ? -dy / dist : 0;
+          enemy.x = Phaser.Math.Clamp(
+            enemy.x + rx * enemy.speed * dt,
+            enemy.radius,
+            ARENA_WIDTH - enemy.radius,
+          );
+          enemy.y = Phaser.Math.Clamp(
+            enemy.y + ry * enemy.speed * dt,
+            HUD_HEIGHT + enemy.radius,
+            ARENA_HEIGHT - enemy.radius,
+          );
+        } else if (dist > SHOOTER_RANGE && dist > 0.001) {
+          enemy.x += (dx / dist) * enemy.speed * dt;
+          enemy.y += (dy / dist) * enemy.speed * dt;
+        }
+
+        dx = this.playerX - enemy.x;
+        dy = this.playerY - enemy.y;
+        dist = Math.hypot(dx, dy);
+
+        enemy.fireCooldown = Math.max(0, enemy.fireCooldown - dt);
+        if (dist <= SHOOTER_RANGE && enemy.fireCooldown <= 0) {
+          const ux = dist > 0.001 ? dx / dist : 1;
+          const uy = dist > 0.001 ? dy / dist : 0;
+          const sprite = this.add
+            .image(enemy.x, enemy.y, 'enemy_bolt')
+            .setDisplaySize(24, 24)
+            .setDepth(11);
+          this.enemyBolts.push({
+            x: enemy.x,
+            y: enemy.y,
+            vx: ux * SHOOTER_BOLT_SPEED,
+            vy: uy * SHOOTER_BOLT_SPEED,
+            radius: SHOOTER_BOLT_RADIUS,
+            damage: SHOOTER_BOLT_DAMAGE,
+            sprite,
+          });
+          enemy.fireCooldown = SHOOTER_FIRE_COOLDOWN;
+        }
+      } else if (dist > 0.001) {
         enemy.x += (dx / dist) * enemy.speed * dt;
         enemy.y += (dy / dist) * enemy.speed * dt;
       }
+
       if (enemy.attackCooldownRemaining > 0) {
         enemy.attackCooldownRemaining = Math.max(0, enemy.attackCooldownRemaining - dt);
       }
@@ -875,6 +991,38 @@ export class GameScene extends Phaser.Scene {
         enemy.attackCooldownRemaining = enemy.attackCooldown;
         this.playerHitFlash = PLAYER_HIT_FLASH_DURATION;
         this.playerScreenFlash = PLAYER_SCREEN_FLASH_DURATION;
+        if (this.stats.hp <= 0) {
+          this.finishRun(false);
+          return;
+        }
+        this.cameras.main.shake(PLAYER_SHAKE_DURATION_MS, PLAYER_SHAKE_INTENSITY);
+      }
+    }
+  }
+
+  private updateEnemyBolts(dt: number): void {
+    for (let i = this.enemyBolts.length - 1; i >= 0; i -= 1) {
+      const bolt = this.enemyBolts[i];
+      bolt.x += bolt.vx * dt;
+      bolt.y += bolt.vy * dt;
+
+      if (
+        bolt.x < 0 ||
+        bolt.x > ARENA_WIDTH ||
+        bolt.y < HUD_HEIGHT ||
+        bolt.y > ARENA_HEIGHT
+      ) {
+        bolt.sprite.destroy();
+        this.enemyBolts.splice(i, 1);
+        continue;
+      }
+
+      if (Math.hypot(this.playerX - bolt.x, this.playerY - bolt.y) <= bolt.radius + PLAYER_RADIUS) {
+        this.stats.hp = Math.max(0, this.stats.hp - bolt.damage);
+        this.playerHitFlash = PLAYER_HIT_FLASH_DURATION;
+        this.playerScreenFlash = PLAYER_SCREEN_FLASH_DURATION;
+        bolt.sprite.destroy();
+        this.enemyBolts.splice(i, 1);
         if (this.stats.hp <= 0) {
           this.finishRun(false);
           return;
@@ -1176,7 +1324,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnDamageNumber(enemy: EnemyEntity, damage: number, isKill: boolean): void {
-    const yOffset = enemy.kind === 'boss' ? 42 : 24;
+    const yOffset = enemy.kind === 'boss' ? 42 : enemy.kind === 'elite' ? 32 : 24;
     for (let i = this.damageNumbers.length - 1; i >= 0; i -= 1) {
       const existing = this.damageNumbers[i];
       if (canMergeDamageNumber(existing, enemy.id)) {
@@ -1241,13 +1389,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnDeathBurst(enemy: EnemyEntity): void {
-    const count = enemy.kind === 'boss' ? 18 : 7;
-    const colors =
-      enemy.kind === 'boss'
-        ? [0xb03a2e, 0xe8b34b, 0xfbf6e9]
-        : enemy.kind === 'lantern'
-          ? [0xe8b34b, 0xb03a2e, 0xf2e3c6]
-          : [0xfbf6e9, 0x8fa8c8, 0xb03a2e];
+    const count = enemy.kind === 'boss' ? 18 : enemy.kind === 'elite' ? 12 : 7;
+    const colorsByKind: Record<EnemyKind, number[]> = {
+      boss: [0xb03a2e, 0xe8b34b, 0xfbf6e9],
+      elite: [0xb03a2e, 0xe8b34b, 0x4e7a5a],
+      shooter: [0xe8b34b, 0xb03a2e],
+      swift: [0xfbf6e9, 0x8fa8c8],
+      lantern: [0xe8b34b, 0xb03a2e, 0xf2e3c6],
+      paper: [0xfbf6e9, 0x8fa8c8, 0xb03a2e],
+    };
+    const colors = colorsByKind[enemy.kind];
 
     for (let k = 0; k < count; k += 1) {
       if (this.burstParticles.length >= MAX_BURST_PARTICLES) {
@@ -1261,7 +1412,7 @@ export class GameScene extends Phaser.Scene {
         y: enemy.y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        size: enemy.kind === 'boss' ? 6 : 4,
+        size: enemy.kind === 'boss' ? 6 : enemy.kind === 'elite' ? 5 : 4,
         color: colors[k % colors.length],
         timer: maxTimer,
         maxTimer,
@@ -1300,6 +1451,10 @@ export class GameScene extends Phaser.Scene {
         for (let k = 0; k < BOSS_XP_ORBS; k += 1) {
           const spawnPos = computeBossOrbSpawnPos(enemy.x, enemy.y, k, BOSS_XP_ORBS);
           this.spawnOrbAt(spawnPos.x, spawnPos.y, computeOrbScatterVelocity(k, BOSS_XP_ORBS));
+        }
+      } else if (enemy.kind === 'elite') {
+        for (let k = 0; k < ELITE_XP_ORBS; k += 1) {
+          this.spawnOrbAt(enemy.x, enemy.y, computeOrbScatterVelocity(k, ELITE_XP_ORBS));
         }
       } else {
         this.spawnOrbAt(enemy.x, enemy.y, computeOrbScatterVelocity(0, 1));
@@ -1508,22 +1663,24 @@ export class GameScene extends Phaser.Scene {
 
     // Enemies + crisp pixel HP bars (render-only knockback & hit scale pop)
     for (const enemy of this.enemies) {
-      const baseKey =
-        enemy.kind === 'boss'
-          ? 'enemy_boss'
-          : enemy.kind === 'lantern'
-            ? 'enemy_lantern'
-            : 'enemy_paper';
+      const baseKey = `enemy_${enemy.kind}`;
       const texKey = enemy.hitFlash > 0 ? `${baseKey}_hit` : baseKey;
+      const halfWidth =
+        enemy.kind === 'boss'
+          ? BOSS_RENDER_HALF_WIDTH
+          : enemy.kind === 'elite'
+            ? 44
+            : ENEMY_RENDER_HALF_WIDTH;
       const renderPos = computeClampedRenderPos(
         enemy.x,
         enemy.y,
         enemy.knockbackOffsetX,
         enemy.knockbackOffsetY,
-        enemy.kind === 'boss' ? BOSS_RENDER_HALF_WIDTH : ENEMY_RENDER_HALF_WIDTH,
+        halfWidth,
       );
-      const baseSize = enemy.kind === 'boss' ? 128 : 64;
-      const hitScale = enemy.hitFlash > 0 ? (enemy.kind === 'boss' ? 1.06 : 1.12) : 1;
+      const baseSize = enemy.kind === 'boss' ? 128 : enemy.kind === 'elite' ? 88 : 64;
+      const hitScale =
+        enemy.hitFlash > 0 ? (enemy.kind === 'boss' ? 1.06 : enemy.kind === 'elite' ? 1.09 : 1.12) : 1;
       const displaySize = Math.round(baseSize * hitScale);
 
       enemy.sprite
@@ -1532,9 +1689,9 @@ export class GameScene extends Phaser.Scene {
         .setDisplaySize(displaySize, displaySize)
         .setFlipX(this.playerX < enemy.x);
 
-      if (enemy.kind === 'boss' || enemy.hp < enemy.maxHp) {
-        const w = enemy.kind === 'boss' ? 48 : 24;
-        const yOffset = enemy.kind === 'boss' ? 44 : 26;
+      if (enemy.kind === 'boss' || enemy.kind === 'elite' || enemy.hp < enemy.maxHp) {
+        const w = enemy.kind === 'boss' ? 48 : enemy.kind === 'elite' ? 36 : 24;
+        const yOffset = enemy.kind === 'boss' ? 44 : enemy.kind === 'elite' ? 36 : 26;
         const ratio = Math.max(0, enemy.hp / enemy.maxHp);
         const barX = Math.round(renderPos.x - w / 2);
         const barY = Math.round(renderPos.y - yOffset);
@@ -1542,6 +1699,25 @@ export class GameScene extends Phaser.Scene {
         g.fillRect(barX - 1, barY - 1, w + 2, 6);
         g.fillStyle(0xb03a2e, 1);
         g.fillRect(barX, barY, Math.max(1, Math.round(w * ratio)), 4);
+      }
+    }
+
+    // Enemy bolts + 3-segment fading pixel trail
+    for (const bolt of this.enemyBolts) {
+      bolt.sprite.setPosition(Math.round(bolt.x), Math.round(bolt.y));
+      const speed = Math.hypot(bolt.vx, bolt.vy) || 1;
+      const bx = -bolt.vx / speed;
+      const by = -bolt.vy / speed;
+      const trailSpecs: readonly [number, number, number, number][] = [
+        [7, 6, 0xe8b34b, 0.65],
+        [14, 4, 0xb03a2e, 0.42],
+        [21, 3, 0xb03a2e, 0.22],
+      ];
+      for (const [dist, sz, color, alpha] of trailSpecs) {
+        const tx = Math.round(bolt.x + bx * dist - sz / 2);
+        const ty = Math.round(bolt.y + by * dist - sz / 2);
+        g.fillStyle(color, alpha);
+        g.fillRect(tx, ty, sz, sz);
       }
     }
 
@@ -1646,6 +1822,10 @@ export class GameScene extends Phaser.Scene {
       dn.shadowText.destroy();
     }
     this.damageNumbers = [];
+    for (const bolt of this.enemyBolts) {
+      bolt.sprite.destroy();
+    }
+    this.enemyBolts = [];
     this.burstParticles = [];
     this.playerScreenFlash = 0;
     this.playerDamageFlashRect.setAlpha(0);

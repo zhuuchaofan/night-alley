@@ -8,10 +8,29 @@ import {
   BOSS_SPEED,
   BOSS_STATS,
   BOSS_XP_ORBS,
+  ELITE_HP_MULT,
+  ELITE_RADIUS,
+  ELITE_SPEED_MULT,
+  ELITE_XP_ORBS,
   enemyStatsAt,
+  enemyStatsForKind,
   ENEMY_RADIUS,
   MAX_ENEMIES,
+  SHOOTER_BOLT_DAMAGE,
+  SHOOTER_BOLT_RADIUS,
+  SHOOTER_BOLT_SPEED,
+  SHOOTER_FIRE_COOLDOWN,
+  SHOOTER_RANGE,
+  SHOOTER_RETREAT_DIST,
+  SHOOTER_SPEED_MULT,
+  SPAWN_WEIGHT_ELITE,
+  SPAWN_WEIGHT_SHOOTER_MAX,
+  SPAWN_WEIGHT_SWIFT_MAX,
   spawnIntervalAt,
+  spawnWeightsAt,
+  SWIFT_HP,
+  SWIFT_RADIUS,
+  SWIFT_SPEED_MULT,
   xpNeededForLevel,
 } from '../../src/game/balance.ts';
 
@@ -98,5 +117,36 @@ describe('Boss constants', () => {
     expect(BOSS_RADIUS).toBeGreaterThan(ENEMY_RADIUS);
     expect(BOSS_SPEED).toBeGreaterThan(enemyStatsAt(180).speed);
     expect(BOSS_CONTACT_DAMAGE).toBeGreaterThan(enemyStatsAt(180).contactDamage);
+  });
+});
+
+describe('Enemy variety constants', () => {
+  it('exposes finalized swift/shooter/elite constants and time weights', () => {
+    expect(SWIFT_HP).toBe(2);
+    expect(SWIFT_SPEED_MULT).toBe(1.5);
+    expect(SWIFT_RADIUS).toBe(8);
+
+    expect(SHOOTER_SPEED_MULT).toBe(0.8);
+    expect(SHOOTER_RANGE).toBe(200);
+    expect(SHOOTER_RETREAT_DIST).toBe(120);
+    expect(SHOOTER_FIRE_COOLDOWN).toBe(3.0);
+    expect(SHOOTER_BOLT_SPEED).toBe(110);
+    expect(SHOOTER_BOLT_RADIUS).toBe(5);
+    expect(SHOOTER_BOLT_DAMAGE).toBe(1);
+
+    expect(ELITE_HP_MULT).toBe(4.5);
+    expect(ELITE_SPEED_MULT).toBe(0.85);
+    expect(ELITE_RADIUS).toBe(14);
+    expect(ELITE_XP_ORBS).toBe(3);
+
+    expect(SPAWN_WEIGHT_ELITE).toBe(0.008);
+    expect(SPAWN_WEIGHT_SWIFT_MAX).toBe(0.25);
+    expect(SPAWN_WEIGHT_SHOOTER_MAX).toBe(0.15);
+
+    const w120 = spawnWeightsAt(120);
+    expect(w120.swift).toBeCloseTo(0.25, 10);
+    expect(w120.shooter).toBeCloseTo(0.15, 10);
+    expect(w120.elite).toBeCloseTo(0.008, 10);
+    expect(enemyStatsForKind('elite', 30).maxHp).toBe(40);
   });
 });

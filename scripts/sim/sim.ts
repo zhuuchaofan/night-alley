@@ -39,19 +39,28 @@ import {
   BOSS_STATS,
   BOSS_XP_ORBS,
   createInitialPlayerStats,
-  enemyStatsAt,
+  ELITE_XP_ORBS,
+  enemyStatsForKind,
   EVOLUTION_DEFS,
   HUD_HEIGHT,
   MAX_ENEMIES,
   ORB_PULL_SPEED,
   ORB_RADIUS,
+  pickSpawnKind,
   PLAYER_RADIUS,
   ROUND_DURATION_SECONDS,
+  SHOOTER_BOLT_DAMAGE,
+  SHOOTER_BOLT_RADIUS,
+  SHOOTER_BOLT_SPEED,
+  SHOOTER_FIRE_COOLDOWN,
+  SHOOTER_RANGE,
+  SHOOTER_RETREAT_DIST,
   SPAWN_MARGIN,
   spawnIntervalAt,
   WEAPON_ORDER,
   XP_PER_ORB,
   xpNeededForLevel,
+  type EnemyKind,
   type PlayerStats,
   type WeaponId,
 } from '../../src/game/balance.ts';
@@ -79,6 +88,26 @@ const PLAY_MAX_X = ARENA_WIDTH - PLAYER_RADIUS;
 const PLAY_MIN_Y = HUD_HEIGHT + PLAYER_RADIUS;
 const PLAY_MAX_Y = ARENA_HEIGHT - PLAYER_RADIUS;
 
+export const ENEMY_KINDS: readonly EnemyKind[] = [
+  'paper',
+  'lantern',
+  'swift',
+  'shooter',
+  'elite',
+  'boss',
+];
+
+function createEmptyKillsByKind(): Record<EnemyKind, number> {
+  return {
+    paper: 0,
+    lantern: 0,
+    swift: 0,
+    shooter: 0,
+    elite: 0,
+    boss: 0,
+  };
+}
+
 export interface SimConfig {
   runs: number;
   seed: number;
@@ -88,6 +117,8 @@ export interface RunResult {
   won: boolean;
   survivedSeconds: number;
   kills: number;
+  killsByKind: Record<EnemyKind, number>;
+  eliteSpawned: number;
   level: number;
   maxConcurrent: number;
   bossSpawned: boolean;
@@ -111,6 +142,8 @@ export interface SimSummary {
   winRate: number;
   avgSurvivedSeconds: number;
   avgKills: number;
+  killShareByKind: Record<EnemyKind, number>;
+  eliteSpawnRate: number;
   avgLevel: number;
   avgMaxConcurrent: number;
   avgHpAt30s: number;
@@ -126,7 +159,7 @@ export interface SimSummary {
 }
 
 interface EnemyEntity {
-  kind: 'normal' | 'boss';
+  kind: EnemyKind;
   x: number;
   y: number;
   radius: number;
@@ -135,6 +168,17 @@ interface EnemyEntity {
   contactDamage: number;
   attackCooldown: number;
   attackCooldownRemaining: number;
+  fireCooldown: number;
+  retreating: boolean;
+}
+
+interface EnemyBoltEntity {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  damage: number;
 }
 
 interface OrbEntity {
@@ -233,11 +277,14 @@ export function runSingleSim(seed: number): RunResult {
   let level = 1;
   let xp = 0;
   let kills = 0;
+  const killsByKind = createEmptyKillsByKind();
+  let eliteSpawned = 0;
   let maxConcurrent = 0;
   let bossSpawned = false;
   let bossKilled = false;
 
   const enemies: EnemyEntity[] = [];
+  const enemyBolts: EnemyBoltEntity[] = [];
   const orbs: OrbEntity[] = [];
   const darts: DartEntity[] = [];
 
@@ -276,6 +323,7 @@ export function runSingleSim(seed: number): RunResult {
     const enemy = enemies[index];
     enemy.hp -= damage;
     if (enemy.hp <= 0) {
+      killsByKind[enemy.kind] += 1;
       if (enemy.kind === 'boss') {
         bossKilled = true;
         for (let k = 0; k < BOSS_XP_ORBS; k += 1) {
@@ -285,6 +333,10 @@ export function runSingleSim(seed: number): RunResult {
             x: clamp(enemy.x + Math.cos(angle) * dist, PLAY_MIN_X, PLAY_MAX_X),
             y: clamp(enemy.y + Math.sin(angle) * dist, PLAY_MIN_Y, PLAY_MAX_Y),
           });
+        }
+      } else if (enemy.kind === 'elite') {
+        for (let k = 0; k < ELITE_XP_ORBS; k += 1) {
+          orbs.push({ x: enemy.x, y: enemy.y });
         }
       } else {
         orbs.push({ x: enemy.x, y: enemy.y });
@@ -330,6 +382,33 @@ export function runSingleSim(seed: number): RunResult {
             fleeX += weight;
           }
         }
+      }
+    }
+
+    // Incoming enemy bolts: sidestep perpendicular to bolt velocity + light radial flee.
+    for (let i = 0; i < enemyBolts.length; i += 1) {
+      const bolt = enemyBolts[i];
+      const dx = playerX - bolt.x;
+      const dy = playerY - bolt.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= 160 && (bolt.vx * dx + bolt.vy * dy > 0 || dist <= 60)) {
+        hasEnemyWithin200 = true;
+        if (dist <= 120) {
+          hasEnemyWithin120 = true;
+        }
+        const safeDist = Math.max(dist, 8);
+        const weight = 1 / (safeDist * safeDist);
+        const spd = Math.hypot(bolt.vx, bolt.vy) || 1;
+        let perpX = -bolt.vy / spd;
+        let perpY = bolt.vx / spd;
+        if (perpX * dx + perpY * dy < 0) {
+          perpX = -perpX;
+          perpY = -perpY;
+        }
+        const radX = dist > 0.001 ? dx / dist : 1;
+        const radY = dist > 0.001 ? dy / dist : 0;
+        fleeX += (perpX * 0.75 + radX * 0.25) * weight;
+        fleeY += (perpY * 0.75 + radY * 0.25) * weight;
       }
     }
 
@@ -461,6 +540,8 @@ export function runSingleSim(seed: number): RunResult {
         contactDamage: BOSS_STATS.contactDamage,
         attackCooldown: BOSS_STATS.attackCooldown,
         attackCooldownRemaining: 0,
+        fireCooldown: 0,
+        retreating: false,
       });
       if (enemies.length > maxConcurrent) {
         maxConcurrent = enemies.length;
@@ -479,9 +560,13 @@ export function runSingleSim(seed: number): RunResult {
       }
       if (normalCount < MAX_ENEMIES) {
         const { x, y } = randomEdgePoint();
-        const template = enemyStatsAt(elapsedSeconds);
+        const kind = pickSpawnKind(elapsedSeconds, rng());
+        const template = enemyStatsForKind(kind, elapsedSeconds);
+        if (kind === 'elite') {
+          eliteSpawned += 1;
+        }
         enemies.push({
-          kind: 'normal',
+          kind,
           x,
           y,
           radius: template.radius,
@@ -490,6 +575,8 @@ export function runSingleSim(seed: number): RunResult {
           contactDamage: template.contactDamage,
           attackCooldown: template.attackCooldown,
           attackCooldownRemaining: 0,
+          fireCooldown: kind === 'shooter' ? 0.5 : 0,
+          retreating: false,
         });
         if (enemies.length > maxConcurrent) {
           maxConcurrent = enemies.length;
@@ -501,13 +588,54 @@ export function runSingleSim(seed: number): RunResult {
   const updateEnemies = (dt: number): boolean => {
     for (let i = 0; i < enemies.length; i += 1) {
       const enemy = enemies[i];
-      const dx = playerX - enemy.x;
-      const dy = playerY - enemy.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 0.001) {
+      let dx = playerX - enemy.x;
+      let dy = playerY - enemy.y;
+      let dist = Math.hypot(dx, dy);
+
+      if (enemy.kind === 'shooter') {
+        if (dist < SHOOTER_RETREAT_DIST) {
+          enemy.retreating = true;
+        } else if (dist >= SHOOTER_RANGE) {
+          enemy.retreating = false;
+        }
+
+        if (enemy.retreating) {
+          const rx = dist > 0.001 ? -dx / dist : 1;
+          const ry = dist > 0.001 ? -dy / dist : 0;
+          enemy.x = clamp(enemy.x + rx * enemy.speed * dt, enemy.radius, ARENA_WIDTH - enemy.radius);
+          enemy.y = clamp(
+            enemy.y + ry * enemy.speed * dt,
+            HUD_HEIGHT + enemy.radius,
+            ARENA_HEIGHT - enemy.radius,
+          );
+        } else if (dist > SHOOTER_RANGE && dist > 0.001) {
+          enemy.x += (dx / dist) * enemy.speed * dt;
+          enemy.y += (dy / dist) * enemy.speed * dt;
+        }
+
+        dx = playerX - enemy.x;
+        dy = playerY - enemy.y;
+        dist = Math.hypot(dx, dy);
+
+        enemy.fireCooldown = Math.max(0, enemy.fireCooldown - dt);
+        if (dist <= SHOOTER_RANGE && enemy.fireCooldown <= 0) {
+          const ux = dist > 0.001 ? dx / dist : 1;
+          const uy = dist > 0.001 ? dy / dist : 0;
+          enemyBolts.push({
+            x: enemy.x,
+            y: enemy.y,
+            vx: ux * SHOOTER_BOLT_SPEED,
+            vy: uy * SHOOTER_BOLT_SPEED,
+            radius: SHOOTER_BOLT_RADIUS,
+            damage: SHOOTER_BOLT_DAMAGE,
+          });
+          enemy.fireCooldown = SHOOTER_FIRE_COOLDOWN;
+        }
+      } else if (dist > 0.001) {
         enemy.x += (dx / dist) * enemy.speed * dt;
         enemy.y += (dy / dist) * enemy.speed * dt;
       }
+
       if (enemy.attackCooldownRemaining > 0) {
         enemy.attackCooldownRemaining = Math.max(0, enemy.attackCooldownRemaining - dt);
       }
@@ -573,6 +701,33 @@ export function runSingleSim(seed: number): RunResult {
       }
     }
 
+    return true;
+  };
+
+  const updateEnemyBolts = (dt: number): boolean => {
+    for (let i = enemyBolts.length - 1; i >= 0; i -= 1) {
+      const bolt = enemyBolts[i];
+      bolt.x += bolt.vx * dt;
+      bolt.y += bolt.vy * dt;
+
+      if (
+        bolt.x < 0 ||
+        bolt.x > ARENA_WIDTH ||
+        bolt.y < HUD_HEIGHT ||
+        bolt.y > ARENA_HEIGHT
+      ) {
+        enemyBolts.splice(i, 1);
+        continue;
+      }
+
+      if (Math.hypot(playerX - bolt.x, playerY - bolt.y) <= bolt.radius + PLAYER_RADIUS) {
+        stats.hp = Math.max(0, stats.hp - bolt.damage);
+        enemyBolts.splice(i, 1);
+        if (stats.hp <= 0) {
+          return false;
+        }
+      }
+    }
     return true;
   };
 
@@ -739,6 +894,8 @@ export function runSingleSim(seed: number): RunResult {
         won: true,
         survivedSeconds: ROUND_DURATION_SECONDS,
         kills,
+        killsByKind,
+        eliteSpawned,
         level,
         maxConcurrent,
         bossSpawned,
@@ -750,11 +907,13 @@ export function runSingleSim(seed: number): RunResult {
 
     updatePlayerMovement(SIM_DT);
     updateSpawning(SIM_DT, elapsedSeconds);
-    if (!updateEnemies(SIM_DT)) {
+    if (!updateEnemies(SIM_DT) || !updateEnemyBolts(SIM_DT)) {
       return {
         won: false,
         survivedSeconds: elapsedSeconds,
         kills,
+        killsByKind,
+        eliteSpawned,
         level,
         maxConcurrent,
         bossSpawned,
@@ -776,6 +935,8 @@ export function runSingleSim(seed: number): RunResult {
     won: true,
     survivedSeconds: ROUND_DURATION_SECONDS,
     kills,
+    killsByKind,
+    eliteSpawned,
     level,
     maxConcurrent,
     bossSpawned,
@@ -794,6 +955,8 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
   let wins = 0;
   let totalSurvived = 0;
   let totalKills = 0;
+  const totalKillsByKind = createEmptyKillsByKind();
+  let totalEliteSpawned = 0;
   let totalLevel = 0;
   let totalMaxConcurrent = 0;
   let bossSpawnedCount = 0;
@@ -822,6 +985,10 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
     if (res.won) wins += 1;
     if (res.bossSpawned) bossSpawnedCount += 1;
     if (res.bossKilled) bossKilledCount += 1;
+    for (const kind of ENEMY_KINDS) {
+      totalKillsByKind[kind] += res.killsByKind[kind];
+    }
+    totalEliteSpawned += res.eliteSpawned;
     for (const weaponId of res.evolved) {
       evolutionCounts[weaponId] += 1;
     }
@@ -851,6 +1018,10 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
 
   const avgHpTrajectory = hpSums.map((sum) => (runs > 0 ? sum / runs : 0));
   const pct = (count: number): number => (runs > 0 ? (count / runs) * 100 : 0);
+  const killShareByKind = createEmptyKillsByKind();
+  for (const kind of ENEMY_KINDS) {
+    killShareByKind[kind] = totalKills > 0 ? (totalKillsByKind[kind] / totalKills) * 100 : 0;
+  }
 
   return {
     runs,
@@ -858,6 +1029,8 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
     winRate: pct(wins),
     avgSurvivedSeconds: runs > 0 ? totalSurvived / runs : 0,
     avgKills: runs > 0 ? totalKills / runs : 0,
+    killShareByKind,
+    eliteSpawnRate: runs > 0 ? totalEliteSpawned / runs : 0,
     avgLevel: runs > 0 ? totalLevel / runs : 0,
     avgMaxConcurrent: runs > 0 ? totalMaxConcurrent / runs : 0,
     avgHpAt30s: avgHpTrajectory[3] ?? 0,
@@ -892,12 +1065,20 @@ export function formatSimSummary(summary: SimSummary): string {
   lines.push(`| Win Rate | ${summary.winRate.toFixed(1)}% |`);
   lines.push(`| Avg Survived (s) | ${summary.avgSurvivedSeconds.toFixed(2)} |`);
   lines.push(`| Avg Kills | ${summary.avgKills.toFixed(2)} |`);
+  lines.push(`| Elite Spawn Rate | ${summary.eliteSpawnRate.toFixed(2)} / run |`);
   lines.push(`| Avg Level | ${summary.avgLevel.toFixed(2)} |`);
   lines.push(`| Avg Max Concurrent | ${summary.avgMaxConcurrent.toFixed(2)} |`);
   lines.push(`| Avg HP @ 30s | ${summary.avgHpAt30s.toFixed(2)} |`);
   lines.push(
     `| Boss Kill Rate | ${summary.bossKillRate.toFixed(1)}% (${summary.bossKilledCount}/${summary.runs}; ${summary.bossKillRateWhenSpawned.toFixed(1)}% of ${summary.bossSpawnedCount} spawned) |`,
   );
+  lines.push('');
+  lines.push('Enemy Kill Share:');
+  lines.push('| Kind | Share |');
+  lines.push('| --- | --- |');
+  for (const kind of ENEMY_KINDS) {
+    lines.push(`| ${kind} | ${summary.killShareByKind[kind].toFixed(1)}% |`);
+  }
   lines.push('');
   lines.push('Evolution Summary:');
   lines.push('| Metric | Value |');

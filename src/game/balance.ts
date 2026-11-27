@@ -24,6 +24,34 @@ export const ENEMY_ATTACK_COOLDOWN = 0.5;
 export const ENEMY_RADIUS = 10;
 export const ENEMY_COLOR = 0x9a8fb5;
 
+export type SpawnEnemyKind = 'paper' | 'lantern' | 'swift' | 'shooter' | 'elite';
+export type EnemyKind = SpawnEnemyKind | 'boss';
+
+export const SWIFT_HP = 2;
+export const SWIFT_SPEED_MULT = 1.5;
+export const SWIFT_RADIUS = 8;
+
+export const SHOOTER_SPEED_MULT = 0.8;
+export const SHOOTER_RADIUS = ENEMY_RADIUS;
+export const SHOOTER_RANGE = 200;
+export const SHOOTER_RETREAT_DIST = 120;
+export const SHOOTER_FIRE_COOLDOWN = 3.0;
+export const SHOOTER_BOLT_SPEED = 110;
+export const SHOOTER_BOLT_RADIUS = 5;
+export const SHOOTER_BOLT_DAMAGE = 1;
+
+export const ELITE_HP_MULT = 4.5;
+export const ELITE_SPEED_MULT = 0.85;
+export const ELITE_RADIUS = 14;
+export const ELITE_XP_ORBS = 3;
+
+export const SPAWN_WEIGHT_ELITE = 0.008;
+export const SPAWN_WEIGHT_SWIFT_MAX = 0.25;
+export const SPAWN_WEIGHT_SWIFT_RAMP_END = 120;
+export const SPAWN_WEIGHT_SHOOTER_RAMP_START = 30;
+export const SPAWN_WEIGHT_SHOOTER_RAMP_END = 120;
+export const SPAWN_WEIGHT_SHOOTER_MAX = 0.15;
+
 export const BOSS_SPAWN_ELAPSED_SECONDS = 150;
 export const BOSS_MAX_HP = 120;
 export const BOSS_SPEED = 85;
@@ -176,6 +204,69 @@ export function enemyStatsAt(elapsedSeconds: number): EnemyStats {
     attackCooldown: ENEMY_ATTACK_COOLDOWN,
     radius: ENEMY_RADIUS,
   };
+}
+
+/** Enemy attributes for a specific spawn kind at `elapsedSeconds`. */
+export function enemyStatsForKind(kind: SpawnEnemyKind, elapsedSeconds: number): EnemyStats {
+  const base = enemyStatsAt(elapsedSeconds);
+  if (kind === 'swift') {
+    return {
+      ...base,
+      maxHp: SWIFT_HP,
+      speed: base.speed * SWIFT_SPEED_MULT,
+      radius: SWIFT_RADIUS,
+    };
+  }
+  if (kind === 'shooter') {
+    return {
+      ...base,
+      speed: base.speed * SHOOTER_SPEED_MULT,
+      radius: SHOOTER_RADIUS,
+    };
+  }
+  if (kind === 'elite') {
+    return {
+      ...base,
+      maxHp: Math.floor(base.maxHp * ELITE_HP_MULT),
+      speed: base.speed * ELITE_SPEED_MULT,
+      radius: ELITE_RADIUS,
+    };
+  }
+  return base;
+}
+
+/** Spawn weights for each non-boss enemy kind at `elapsedSeconds` (sum = 1). */
+export function spawnWeightsAt(elapsedSeconds: number): Record<SpawnEnemyKind, number> {
+  const t = Math.max(0, elapsedSeconds);
+  const elite = SPAWN_WEIGHT_ELITE;
+  const swift = SPAWN_WEIGHT_SWIFT_MAX * Math.min(1, t / SPAWN_WEIGHT_SWIFT_RAMP_END);
+  const shooter =
+    t <= SPAWN_WEIGHT_SHOOTER_RAMP_START
+      ? 0
+      : SPAWN_WEIGHT_SHOOTER_MAX *
+        Math.min(
+          1,
+          (t - SPAWN_WEIGHT_SHOOTER_RAMP_START) /
+            (SPAWN_WEIGHT_SHOOTER_RAMP_END - SPAWN_WEIGHT_SHOOTER_RAMP_START),
+        );
+  const remaining = Math.max(0, 1 - elite - swift - shooter);
+  const lantern = remaining / 3;
+  const paper = remaining - lantern;
+  return { paper, lantern, swift, shooter, elite };
+}
+
+/** Pick a non-boss enemy kind using the time-varying weights at `elapsedSeconds`. */
+export function pickSpawnKind(elapsedSeconds: number, rng01: number): SpawnEnemyKind {
+  const w = spawnWeightsAt(elapsedSeconds);
+  let r = Math.max(0, Math.min(0.999999999999, rng01));
+  if (r < w.elite) return 'elite';
+  r -= w.elite;
+  if (r < w.swift) return 'swift';
+  r -= w.swift;
+  if (r < w.shooter) return 'shooter';
+  r -= w.shooter;
+  if (r < w.lantern) return 'lantern';
+  return 'paper';
 }
 
 /** Create initial runtime state for a weapon. */

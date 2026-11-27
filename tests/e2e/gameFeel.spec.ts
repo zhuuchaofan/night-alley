@@ -612,8 +612,13 @@ test.describe('Night Alley game feel (stage 2)', () => {
         const afterRelease = await getDebugState(page);
         expect(Math.abs(afterRelease.playerX - atRelease.playerX)).toBeLessThan(1);
         expect(Math.abs(afterRelease.playerY - atRelease.playerY)).toBeLessThan(1);
-        // Overlay fades out at 6/s, so after 260ms it must be fully gone.
-        expect(afterRelease.gameFeel?.joystickAlpha).toBe(0);
+        // Overlay fades out at 6/s. Poll for zero instead of assuming the
+        // 260 ms wall-clock wait held enough game updates (CI load).
+        await page.waitForFunction(
+          () => window.__NIGHT_ALLEY_DEBUG__?.getState().gameFeel?.joystickAlpha === 0,
+          { timeout: 2000 },
+        );
+        expect((await getDebugState(page)).gameFeel?.joystickAlpha).toBe(0);
       } finally {
         await context.close();
       }

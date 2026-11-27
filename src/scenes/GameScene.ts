@@ -23,9 +23,10 @@ import {
 import { applyChoice, ChoiceOption, generateChoices } from '../game/choices.ts';
 import { DebugChoiceInfo, registerDebugHook, SettlementData } from '../game/debug.ts';
 import {
+  computeJoystickDimensions,
   computeJoystickInput,
-  JOYSTICK_DEADZONE_PX,
-  JOYSTICK_MAX_DISTANCE_PX,
+  followJoystickBase,
+  JoystickDimensions,
 } from '../game/joystick.ts';
 import { addPixelText, wrapPixelText } from '../game/pixelFont.ts';
 import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
@@ -135,10 +136,13 @@ export class GameScene extends Phaser.Scene {
   private lanternAnimTimer = 0;
 
   private isDragging = false;
+  private activeDragPointerId: number | null = null;
   private dragOriginX = 0;
   private dragOriginY = 0;
   private dragCurrentX = 0;
   private dragCurrentY = 0;
+  private joystickAlpha = 0;
+  private windowMouseMoveHandler: ((event: MouseEvent) => void) | null = null;
 
   private isLevelUpOpen = false;
   private activeChoices: DebugChoiceInfo[] = [];
@@ -217,6 +221,8 @@ export class GameScene extends Phaser.Scene {
     this.lanternAnimTimer = 0;
 
     this.isDragging = false;
+    this.activeDragPointerId = null;
+    this.joystickAlpha = 0;
     this.isLevelUpOpen = false;
     this.activeChoices = [];
     this.levelUpModal = null;
@@ -282,7 +288,37 @@ export class GameScene extends Phaser.Scene {
     }).setDepth(20);
   }
 
+  private getJoystickDimensions(): JoystickDimensions {
+    const displayWidth = this.game.canvas.clientWidth || this.scale.displaySize.width;
+    return computeJoystickDimensions(displayWidth / ARENA_WIDTH);
+  }
+
+  private updateDragPosition(x: number, y: number): void {
+    this.dragCurrentX = x;
+    this.dragCurrentY = y;
+    const nextOrigin = followJoystickBase(
+      this.dragOriginX,
+      this.dragOriginY,
+      this.dragCurrentX,
+      this.dragCurrentY,
+      this.getJoystickDimensions().maxDistance,
+    );
+    this.dragOriginX = nextOrigin.x;
+    this.dragOriginY = nextOrigin.y;
+  }
+
+  private removeWindowMouseMove(): void {
+    if (this.windowMouseMoveHandler) {
+      window.removeEventListener('mousemove', this.windowMouseMoveHandler);
+      this.windowMouseMoveHandler = null;
+    }
+  }
+
   private setupInputs(): void {
+    if (this.input.manager.pointersTotal < 3) {
+      this.input.addPointer(3 - this.input.manager.pointersTotal);
+    }
+
     const kb = this.input.keyboard;
     if (kb) {
       this.keys = {
@@ -301,7 +337,11 @@ export class GameScene extends Phaser.Scene {
       if (this.isLevelUpOpen || this.ended) {
         return;
       }
+      if (this.isDragging || pointer.x >= ARENA_WIDTH / 2) {
+        return;
+      }
       this.isDragging = true;
+      this.activeDragPointerId = pointer.id;
       this.dragOriginX = pointer.x;
       this.dragOriginY = pointer.y;
       this.dragCurrentX = pointer.x;
@@ -309,15 +349,41 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (!this.isDragging) {
+      if (!this.isDragging || pointer.id !== this.activeDragPointerId) {
         return;
       }
-      this.dragCurrentX = pointer.x;
-      this.dragCurrentY = pointer.y;
+      this.updateDragPosition(pointer.x, pointer.y);
     });
 
-    const stopDrag = (): void => {
+    this.removeWindowMouseMove();
+    this.windowMouseMoveHandler = (event: MouseEvent): void => {
+      if (!this.isDragging || this.isLevelUpOpen || this.ended) {
+        return;
+      }
+      if (!this.input.mousePointer || this.activeDragPointerId !== this.input.mousePointer.id) {
+        return;
+      }
+      if (event.target === this.game.canvas) {
+        return;
+      }
+      const rect = this.game.canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+      const gameX = ((event.clientX - rect.left) / rect.width) * ARENA_WIDTH;
+      const gameY = ((event.clientY - rect.top) / rect.height) * ARENA_HEIGHT;
+      this.updateDragPosition(gameX, gameY);
+    };
+    window.addEventListener('mousemove', this.windowMouseMoveHandler, { passive: true });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.removeWindowMouseMove, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.removeWindowMouseMove, this);
+
+    const stopDrag = (pointer: Phaser.Input.Pointer): void => {
+      if (!this.isDragging || pointer.id !== this.activeDragPointerId) {
+        return;
+      }
       this.isDragging = false;
+      this.activeDragPointerId = null;
     };
     this.input.on('pointerup', stopDrag);
     this.input.on('pointerupoutside', stopDrag);
@@ -412,6 +478,11 @@ export class GameScene extends Phaser.Scene {
       this.updateDarts(dt);
       this.updateOrbs(dt);
       this.updateEffects(dt);
+      if (this.isDragging) {
+        this.joystickAlpha = Math.min(1, this.joystickAlpha + dt * 10);
+      } else if (this.joystickAlpha > 0) {
+        this.joystickAlpha = Math.max(0, this.joystickAlpha - dt * 6);
+      }
       this.updateHud();
     }
 
@@ -436,9 +507,12 @@ export class GameScene extends Phaser.Scene {
       dy /= len;
       speedFactor = 1;
     } else if (this.isDragging) {
+      const { deadzone, maxDistance } = this.getJoystickDimensions();
       const joy = computeJoystickInput(
         this.dragCurrentX - this.dragOriginX,
         this.dragCurrentY - this.dragOriginY,
+        deadzone,
+        maxDistance,
       );
       dx = joy.dx;
       dy = joy.dy;
@@ -816,6 +890,8 @@ export class GameScene extends Phaser.Scene {
   private openLevelUpModal(): void {
     this.isLevelUpOpen = true;
     this.isDragging = false;
+    this.activeDragPointerId = null;
+    this.joystickAlpha = 0;
 
     const options = generateChoices(this.stats);
     const modal = this.add.container(0, 0).setDepth(30);
@@ -1017,36 +1093,47 @@ export class GameScene extends Phaser.Scene {
       dart.sprite.setPosition(Math.round(dart.x), Math.round(dart.y));
     }
 
-    // Virtual joystick overlay (shown only while actively dragging)
+    // Virtual joystick overlay (translucent pixel art with fade-in/out & full-tilt highlight)
     const jg = this.joystickGfx;
     jg.clear();
-    if (this.isDragging && !this.isLevelUpOpen && !this.ended) {
+    jg.setAlpha(this.joystickAlpha);
+    if (this.joystickAlpha > 0.01 && !this.isLevelUpOpen && !this.ended) {
+      const dims = this.getJoystickDimensions();
       const joy = computeJoystickInput(
         this.dragCurrentX - this.dragOriginX,
         this.dragCurrentY - this.dragOriginY,
+        dims.deadzone,
+        dims.maxDistance,
       );
+      const isMaxed = this.isDragging && joy.speedFactor >= 1 - 1e-6;
       const ox = Math.round(this.dragOriginX);
       const oy = Math.round(this.dragOriginY);
       const kx = Math.round(this.dragOriginX + joy.knobOffsetX);
       const ky = Math.round(this.dragOriginY + joy.knobOffsetY);
+      const radius = Math.round(dims.maxDistance);
+      const deadzone = Math.round(dims.deadzone);
+      const knobRadius = Math.max(6, Math.round(dims.knobRadius));
 
-      jg.lineStyle(4, 0x10182b, 1);
-      jg.strokeCircle(ox, oy, JOYSTICK_MAX_DISTANCE_PX);
-      jg.lineStyle(2, 0x8fa8c8, 1);
-      jg.strokeCircle(ox, oy, JOYSTICK_MAX_DISTANCE_PX);
+      jg.fillStyle(isMaxed ? 0x1b2a4a : 0x10182b, isMaxed ? 0.42 : 0.35);
+      jg.fillCircle(ox, oy, radius);
 
-      jg.fillStyle(0x4e739e, 1);
-      jg.fillCircle(ox, oy, JOYSTICK_DEADZONE_PX);
+      jg.lineStyle(isMaxed ? 4 : 3, 0x10182b, isMaxed ? 0.65 : 0.55);
+      jg.strokeCircle(ox, oy, radius);
+      jg.lineStyle(isMaxed ? 3 : 2, isMaxed ? 0xe8b34b : 0x8fa8c8, isMaxed ? 0.9 : 0.65);
+      jg.strokeCircle(ox, oy, radius);
 
-      jg.lineStyle(2, 0x4e739e, 1);
+      jg.fillStyle(0x4e739e, 0.55);
+      jg.fillCircle(ox, oy, deadzone);
+
+      jg.lineStyle(2, isMaxed ? 0xe8b34b : 0x8fa8c8, isMaxed ? 0.7 : 0.45);
       jg.lineBetween(ox, oy, kx, ky);
 
-      jg.fillStyle(0xe8b34b, 1);
-      jg.fillCircle(kx, ky, 14);
-      jg.lineStyle(2, 0x17120c, 1);
-      jg.strokeCircle(kx, ky, 14);
-      jg.fillStyle(0xfbf6e9, 1);
-      jg.fillCircle(kx - 3, ky - 3, 4);
+      jg.fillStyle(isMaxed ? 0xf7d06b : 0xe8b34b, isMaxed ? 0.92 : 0.78);
+      jg.fillCircle(kx, ky, knobRadius);
+      jg.lineStyle(isMaxed ? 3 : 2, isMaxed ? 0xfbf6e9 : 0x17120c, isMaxed ? 0.95 : 0.8);
+      jg.strokeCircle(kx, ky, knobRadius);
+      jg.fillStyle(0xfbf6e9, isMaxed ? 0.95 : 0.75);
+      jg.fillCircle(kx - Math.round(knobRadius * 0.22), ky - Math.round(knobRadius * 0.22), Math.max(2, Math.round(knobRadius * 0.28)));
     }
   }
 
@@ -1056,6 +1143,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.ended = true;
     this.isDragging = false;
+    this.activeDragPointerId = null;
+    this.joystickAlpha = 0;
     this.joystickGfx.clear();
     this.levelUpModal?.destroy(true);
     this.levelUpModal = null;

@@ -10,6 +10,8 @@ describe('headless balance sim', () => {
     expect(result.kills).toBeGreaterThanOrEqual(0);
     expect(result.level).toBeGreaterThanOrEqual(1);
     expect(result.maxConcurrent).toBeGreaterThanOrEqual(0);
+    expect(typeof result.bossSpawned).toBe('boolean');
+    expect(typeof result.bossKilled).toBe('boolean');
     expect(result.hpTrajectory).toHaveLength(19);
     expect(result.hpTrajectory[0]).toBe(PLAYER_MAX_HP);
     if (!result.won) {
@@ -32,10 +34,13 @@ describe('headless balance sim', () => {
     expect(summary.results).toHaveLength(5);
     expect(summary.winRate).toBeGreaterThanOrEqual(0);
     expect(summary.winRate).toBeLessThanOrEqual(100);
+    expect(summary.bossKillRate).toBeGreaterThanOrEqual(0);
+    expect(summary.bossKillRate).toBeLessThanOrEqual(100);
     expect(summary.avgHpAt30s).toBe(summary.avgHpTrajectory[3]);
 
     const report = formatSimSummary(summary);
     expect(report).toContain('Win Rate');
+    expect(report).toContain('Boss Kill Rate');
     expect(report).toContain('Avg HP @ 30s');
     expect(report).toContain('180s');
   });

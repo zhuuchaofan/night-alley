@@ -129,6 +129,8 @@ export class TitleScene extends Phaser.Scene {
         playerY: ARENA_HEIGHT / 2,
         isLevelUpOpen: false,
         levelUpChoices: [],
+        bossSpawned: false,
+        bossAlive: false,
         settlement: null,
       }),
       addXp: () => {},

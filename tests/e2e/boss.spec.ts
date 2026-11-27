@@ -79,15 +79,20 @@ test.describe('Night Alley final boss', () => {
 
     // The debug spawner shares the game's normal-enemy cap: with the boss
     // alive it must still fill 65 normal enemies, for 66 on the field.
-    // All 70 calls run in one synchronous evaluate, so the sword and the
-    // timed spawner cannot interfere with the count.
-    await page.evaluate(() => {
-      for (let i = 0; i < 70; i += 1) {
-        window.__NIGHT_ALLEY_DEBUG__?.spawnEnemyNearPlayer();
+    // The count is captured in the same evaluate as the spawns, so a game
+    // tick cannot add a normal between the fill and the read and mask a
+    // regression in the debug spawner's own cap check.
+    const filled = await page.evaluate(() => {
+      const dbg = window.__NIGHT_ALLEY_DEBUG__;
+      if (!dbg) {
+        throw new Error('Missing __NIGHT_ALLEY_DEBUG__');
       }
+      for (let i = 0; i < 70; i += 1) {
+        dbg.spawnEnemyNearPlayer();
+      }
+      return dbg.getState();
     });
 
-    const filled = await getDebugState(page);
     expect(filled.bossAlive).toBe(true);
     expect(filled.enemies).toBe(66);
     expect(filled.maxConcurrent).toBeGreaterThanOrEqual(66);

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
+import type { KillCountsByKind } from '../../src/game/debug.ts';
 import { clickLogical, getDebugState, startGame } from './helpers.ts';
 
 const FUN_SCREENSHOT_DIR = path.resolve(process.cwd(), '../fun-stage1-screenshots');
@@ -135,6 +136,7 @@ test.describe('Night Alley final boss', () => {
     // settlement must match these exactly.
     let snapshotKills: number | null = null;
     let snapshotMaxConcurrent: number | null = null;
+    let snapshotKillsByKind: KillCountsByKind | null = null;
     while (Date.now() < deadline) {
       const state = await getDebugState(page);
       if (state.scene === 'GameOverScene') {
@@ -149,6 +151,12 @@ test.describe('Night Alley final boss', () => {
         if (snapshotKills === null) {
           snapshotKills = state.bossKillKills;
           snapshotMaxConcurrent = state.bossKillMaxConcurrent;
+          snapshotKillsByKind = { ...state.killsByKind };
+          expect(snapshotKillsByKind.boss).toBe(1);
+          const kindSum = Object.values(snapshotKillsByKind).reduce((sum, n) => sum + n, 0);
+          expect(kindSum).toBe(snapshotKills);
+        } else {
+          expect(state.killsByKind).toEqual(snapshotKillsByKind);
         }
         if (!cinematicShot) {
           cinematicShot = true;
@@ -200,5 +208,15 @@ test.describe('Night Alley final boss', () => {
     expect(snapshotKills).not.toBeNull();
     expect(overState.settlement!.kills).toBe(snapshotKills);
     expect(overState.settlement!.maxConcurrent).toBe(snapshotMaxConcurrent);
+    expect(overState.settlement!.killsByKind).toEqual(snapshotKillsByKind);
+    expect(overState.killsByKind).toEqual(snapshotKillsByKind);
+
+    await clickLogical(page, 680, 405);
+    await page.waitForFunction(
+      () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'BestiaryScene',
+    );
+    const bestiaryState = await getDebugState(page);
+    expect(bestiaryState.killsByKind.boss).toBe(1);
+    expect(bestiaryState.killsByKind).toEqual(snapshotKillsByKind);
   });
 });

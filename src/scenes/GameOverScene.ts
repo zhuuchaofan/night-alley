@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ARENA_HEIGHT, ARENA_WIDTH, formatTime, PLAYER_MAX_HP } from '../game/balance.ts';
-import { registerDebugHook, SettlementData } from '../game/debug.ts';
+import { createEmptyKillCounts, registerDebugHook, SettlementData } from '../game/debug.ts';
 import { addPixelText } from '../game/pixelFont.ts';
 import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
 
@@ -9,6 +9,7 @@ export class GameOverScene extends Phaser.Scene {
     won: false,
     survivedSeconds: 0,
     kills: 0,
+    killsByKind: createEmptyKillCounts(),
     level: 1,
     maxConcurrent: 0,
   };
@@ -19,7 +20,10 @@ export class GameOverScene extends Phaser.Scene {
 
   init(data?: SettlementData): void {
     if (data) {
-      this.settlement = data;
+      this.settlement = {
+        ...data,
+        killsByKind: { ...data.killsByKind },
+      };
     }
   }
 
@@ -65,12 +69,22 @@ export class GameOverScene extends Phaser.Scene {
       }).setDepth(11);
     });
 
-    this.createButton(370, 405, '再来一局', 0x2e2118, 0xe8b34b, () => {
+    this.createButton(280, 405, '再来一局', 0x2e2118, 0xe8b34b, () => {
       this.scene.start('GameScene');
     });
 
-    this.createButton(590, 405, '返回标题', 0x10182b, 0x8fa8c8, () => {
+    this.createButton(480, 405, '返回标题', 0x10182b, 0x8fa8c8, () => {
       this.scene.start('TitleScene');
+    });
+
+    this.createButton(680, 405, '图册', 0x10182b, 0x8fa8c8, () => {
+      this.scene.start('BestiaryScene', {
+        origin: 'GameOverScene',
+        settlement: {
+          ...this.settlement,
+          killsByKind: { ...this.settlement.killsByKind },
+        },
+      });
     });
 
     registerDebugHook({
@@ -81,6 +95,7 @@ export class GameOverScene extends Phaser.Scene {
         level,
         xp: 0,
         kills,
+        killsByKind: { ...this.settlement.killsByKind },
         timeLeft: won ? 0 : Math.max(0, 180 - survivedSeconds),
         enemies: 0,
         maxConcurrent,
@@ -95,7 +110,10 @@ export class GameOverScene extends Phaser.Scene {
         bossDying: false,
         bossKillKills: null,
         bossKillMaxConcurrent: null,
-        settlement: { ...this.settlement },
+        settlement: {
+          ...this.settlement,
+          killsByKind: { ...this.settlement.killsByKind },
+        },
       }),
       addXp: () => {},
       setTimeLeft: () => {},

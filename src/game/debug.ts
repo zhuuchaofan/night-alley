@@ -1,9 +1,25 @@
 import type { EnemyKind, SpawnEnemyKind, WeaponId } from './balance.ts';
+import { getLandscapeState, type OrientationLockStatus } from './landscape.ts';
+import { getSoundState } from './sound.ts';
+
+export type KillCountsByKind = Record<EnemyKind, number>;
+
+export function createEmptyKillCounts(): KillCountsByKind {
+  return {
+    paper: 0,
+    lantern: 0,
+    swift: 0,
+    shooter: 0,
+    elite: 0,
+    boss: 0,
+  };
+}
 
 export interface SettlementData {
   won: boolean;
   survivedSeconds: number;
   kills: number;
+  killsByKind: KillCountsByKind;
   level: number;
   maxConcurrent: number;
   /** How a win was earned; absent on a loss. */
@@ -57,6 +73,8 @@ export interface DebugGameFeelInfo {
   playerSwinging: boolean;
   playerSwingAngle: number;
   playerScreenFlash: number;
+  /** Joystick overlay alpha (0 = hidden, 1 = fully shown). */
+  joystickAlpha: number;
   damageNumbers: DebugDamageNumberInfo[];
   burstParticles: number;
   scatteringOrbs: number;
@@ -65,12 +83,13 @@ export interface DebugGameFeelInfo {
 }
 
 export interface DebugState {
-  scene: 'TitleScene' | 'GameScene' | 'GameOverScene';
+  scene: 'TitleScene' | 'GameScene' | 'GameOverScene' | 'BestiaryScene';
   hp: number;
   maxHp: number;
   level: number;
   xp: number;
   kills: number;
+  killsByKind: KillCountsByKind;
   timeLeft: number;
   enemies: number;
   enemiesByKind?: Record<string, number>;
@@ -98,10 +117,33 @@ export interface DebugState {
   slashes?: DebugSlashInfo[];
   gameFeel?: DebugGameFeelInfo;
   settlement: SettlementData | null;
+  soundUnlocked: boolean;
+  soundMuted: boolean;
+  portraitHintVisible: boolean;
+  orientationLockAttempted: boolean;
+  orientationLockStatus: OrientationLockStatus;
 }
+
+export type SceneDebugState = Omit<
+  DebugState,
+  | 'soundUnlocked'
+  | 'soundMuted'
+  | 'portraitHintVisible'
+  | 'orientationLockAttempted'
+  | 'orientationLockStatus'
+>;
 
 export interface NightAlleyDebug {
   getState(): DebugState;
+  addXp(n: number): void;
+  setTimeLeft(s: number): void;
+  setHp(n: number): void;
+  spawnEnemyNearPlayer(): void;
+  spawnEnemyKind?(kind: SpawnEnemyKind, offsetX?: number, offsetY?: number): void;
+}
+
+export interface SceneDebugHook {
+  getState(): SceneDebugState;
   addXp(n: number): void;
   setTimeLeft(s: number): void;
   setHp(n: number): void;
@@ -115,6 +157,13 @@ declare global {
   }
 }
 
-export function registerDebugHook(hook: NightAlleyDebug): void {
-  window.__NIGHT_ALLEY_DEBUG__ = hook;
+export function registerDebugHook(hook: SceneDebugHook): void {
+  window.__NIGHT_ALLEY_DEBUG__ = {
+    ...hook,
+    getState: () => ({
+      ...hook.getState(),
+      ...getSoundState(),
+      ...getLandscapeState(),
+    }),
+  };
 }

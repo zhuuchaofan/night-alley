@@ -34,7 +34,14 @@ import {
   xpNeededForLevel,
 } from '../game/balance.ts';
 import { applyChoice, ChoiceOption, generateChoices } from '../game/choices.ts';
-import { DebugChoiceInfo, registerDebugHook, SettlementData } from '../game/debug.ts';
+import {
+  createEmptyKillCounts,
+  DebugChoiceInfo,
+  KillCountsByKind,
+  registerDebugHook,
+  SettlementData,
+} from '../game/debug.ts';
+import { playSound } from '../game/sound.ts';
 import {
   computeJoystickDimensions,
   computeJoystickInput,
@@ -211,6 +218,7 @@ export class GameScene extends Phaser.Scene {
   private level = 1;
   private xp = 0;
   private kills = 0;
+  private killsByKind: KillCountsByKind = createEmptyKillCounts();
   private elapsedSeconds = 0;
   private timeLeft = ROUND_DURATION_SECONDS;
   private maxConcurrent = 0;
@@ -327,6 +335,7 @@ export class GameScene extends Phaser.Scene {
     this.level = 1;
     this.xp = 0;
     this.kills = 0;
+    this.killsByKind = createEmptyKillCounts();
     this.elapsedSeconds = 0;
     this.timeLeft = ROUND_DURATION_SECONDS;
     this.maxConcurrent = 0;
@@ -549,6 +558,7 @@ export class GameScene extends Phaser.Scene {
           level: this.level,
           xp: this.xp,
           kills: this.kills,
+          killsByKind: { ...this.killsByKind },
           timeLeft: Math.round(this.timeLeft * 1000) / 1000,
           enemies: this.enemies.length,
           enemiesByKind,
@@ -581,6 +591,7 @@ export class GameScene extends Phaser.Scene {
             playerSwinging: this.playerSwingTimer > 0,
             playerSwingAngle: Math.round(this.playerSwingAngle * 10000) / 10000,
             playerScreenFlash: Math.round(this.playerScreenFlash * 1000) / 1000,
+            joystickAlpha: Math.round(this.joystickAlpha * 1000) / 1000,
             damageNumbers: this.damageNumbers.map((dn) => ({
               text: dn.text.text,
               x: Math.round(dn.x * 100) / 100,
@@ -850,6 +861,7 @@ export class GameScene extends Phaser.Scene {
       this.maxConcurrent = this.enemies.length;
     }
     this.showBossBanner();
+    playSound('bossEntrance');
   }
 
   private showBossBanner(): void {
@@ -1109,6 +1121,7 @@ export class GameScene extends Phaser.Scene {
       if (this.swordCooldown <= 0) {
         const nearest = this.findNearestEnemy(sword.range);
         if (nearest) {
+          playSound('swing');
           const angle = Math.atan2(nearest.y - this.playerY, nearest.x - this.playerX);
           const halfArcRad = ((sword.arcDeg / 2) * Math.PI) / 180;
           const dmg = sword.damage * this.stats.damageMultiplier;
@@ -1543,6 +1556,7 @@ export class GameScene extends Phaser.Scene {
     enemy.knockbackOffsetY = kb.y;
 
     const isKill = enemy.hp <= 0;
+    playSound(isKill ? 'kill' : 'hit');
     this.spawnDamageNumber(enemy, damage, isKill, evolvedHit);
 
     if (isKill) {
@@ -1555,6 +1569,7 @@ export class GameScene extends Phaser.Scene {
         enemy.sprite.destroy();
         this.enemies.splice(index, 1);
         this.kills += 1;
+        this.killsByKind[enemy.kind] += 1;
         this.bossDying = true;
         this.bossDeathTimer = 0;
         // Freeze the settlement counters at the lethal hit (Codex round-3
@@ -1574,6 +1589,7 @@ export class GameScene extends Phaser.Scene {
       enemy.sprite.destroy();
       this.enemies.splice(index, 1);
       this.kills += 1;
+      this.killsByKind[enemy.kind] += 1;
     }
   }
 
@@ -1594,6 +1610,7 @@ export class GameScene extends Phaser.Scene {
 
   private openLevelUpModal(): void {
     this.isLevelUpOpen = true;
+    playSound('levelUp');
     this.isDragging = false;
     this.activeDragPointerId = null;
     this.joystickAlpha = 0;
@@ -1930,27 +1947,45 @@ export class GameScene extends Phaser.Scene {
       const radius = Math.round(dims.maxDistance);
       const deadzone = Math.round(dims.deadzone);
       const knobRadius = Math.max(6, Math.round(dims.knobRadius));
+      const r = Math.round(knobRadius * (1 - 0.14 * this.joystickAlpha));
+      const discAlpha = (isMaxed ? 0.68 : 0.62) - 0.08 * (1 - this.joystickAlpha);
+      const innerRadius = radius - Math.round(knobRadius * 0.5);
+      const centerMarkerRadius = Math.round(deadzone * 0.5);
 
-      jg.fillStyle(isMaxed ? 0x1b2a4a : 0x10182b, isMaxed ? 0.42 : 0.35);
+      jg.fillStyle(isMaxed ? 0x1b2a4a : 0x10182b, discAlpha);
       jg.fillCircle(ox, oy, radius);
 
-      jg.lineStyle(isMaxed ? 4 : 3, 0x10182b, isMaxed ? 0.65 : 0.55);
+      jg.lineStyle(4, 0x17120c, 0.9);
       jg.strokeCircle(ox, oy, radius);
-      jg.lineStyle(isMaxed ? 3 : 2, isMaxed ? 0xe8b34b : 0x8fa8c8, isMaxed ? 0.9 : 0.65);
+      jg.lineStyle(2, isMaxed ? 0xe8b34b : 0x8fa8c8, isMaxed ? 1.0 : 0.88);
       jg.strokeCircle(ox, oy, radius);
 
-      jg.fillStyle(0x4e739e, 0.55);
-      jg.fillCircle(ox, oy, deadzone);
+      jg.lineStyle(1, isMaxed ? 0xc9973f : 0x4e739e, isMaxed ? 0.9 : 0.7);
+      jg.strokeCircle(ox, oy, innerRadius);
 
-      jg.lineStyle(2, isMaxed ? 0xe8b34b : 0x8fa8c8, isMaxed ? 0.7 : 0.45);
-      jg.lineBetween(ox, oy, kx, ky);
+      jg.fillStyle(isMaxed ? 0xf2e3c6 : 0x8fa8c8, isMaxed ? 0.7 : 0.6);
+      jg.fillCircle(ox, oy, centerMarkerRadius);
 
-      jg.fillStyle(isMaxed ? 0xf7d06b : 0xe8b34b, isMaxed ? 0.92 : 0.78);
-      jg.fillCircle(kx, ky, knobRadius);
-      jg.lineStyle(isMaxed ? 3 : 2, isMaxed ? 0xfbf6e9 : 0x17120c, isMaxed ? 0.95 : 0.8);
-      jg.strokeCircle(kx, ky, knobRadius);
-      jg.fillStyle(0xfbf6e9, isMaxed ? 0.95 : 0.75);
-      jg.fillCircle(kx - Math.round(knobRadius * 0.22), ky - Math.round(knobRadius * 0.22), Math.max(2, Math.round(knobRadius * 0.28)));
+      jg.fillStyle(isMaxed ? 0xe8b34b : 0xc9973f, isMaxed ? 1.0 : 0.98);
+      jg.fillCircle(kx, ky, r);
+      jg.lineStyle(2, isMaxed ? 0xfbf6e9 : 0x17120c, 1.0);
+      jg.strokeCircle(kx, ky, r);
+
+      if (this.isDragging && joy.speedFactor > 0) {
+        const ux = joy.dx;
+        const uy = joy.dy;
+        const vx = -joy.dy;
+        const vy = joy.dx;
+        const tipX = Math.round(kx + 0.46 * r * ux);
+        const tipY = Math.round(ky + 0.46 * r * uy);
+        const tail1X = Math.round(kx - 0.24 * r * ux + 0.3 * r * vx);
+        const tail1Y = Math.round(ky - 0.24 * r * uy + 0.3 * r * vy);
+        const tail2X = Math.round(kx - 0.24 * r * ux - 0.3 * r * vx);
+        const tail2Y = Math.round(ky - 0.24 * r * uy - 0.3 * r * vy);
+        jg.lineStyle(2, 0x17120c, 1.0);
+        jg.lineBetween(tail1X, tail1Y, tipX, tipY);
+        jg.lineBetween(tail2X, tail2Y, tipX, tipY);
+      }
     }
   }
 
@@ -1991,6 +2026,7 @@ export class GameScene extends Phaser.Scene {
             ? ROUND_DURATION_SECONDS
             : Math.min(ROUND_DURATION_SECONDS, Math.round(this.elapsedSeconds)),
       kills: this.kills,
+      killsByKind: { ...this.killsByKind },
       level: this.level,
       maxConcurrent: this.maxConcurrent,
       winReason: won ? winReason : undefined,

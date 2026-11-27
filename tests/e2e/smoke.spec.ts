@@ -3,7 +3,7 @@ import path from 'node:path';
 import { expect, Page, test } from '@playwright/test';
 import type { DebugState } from '../../src/game/debug.ts';
 
-const SCREENSHOT_DIR = path.resolve(process.cwd(), '../prototype-screenshots');
+const SCREENSHOT_DIR = path.resolve(process.cwd(), '../visuals-screenshots');
 
 function ensureScreenshotDir(): void {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
@@ -46,7 +46,7 @@ async function startGame(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene');
 }
 
-test.describe('Night Alley greybox prototype smoke', () => {
+test.describe('Night Alley pixel visuals & controls', () => {
   test.beforeEach(async ({ page }) => {
     ensureScreenshotDir();
     page.on('pageerror', (err) => {
@@ -80,6 +80,11 @@ test.describe('Night Alley greybox prototype smoke', () => {
     const after = await getDebugState(page);
     expect(after.playerX).toBeGreaterThan(before.playerX + 50);
 
+    await page.evaluate(() => {
+      window.__NIGHT_ALLEY_DEBUG__?.spawnEnemyNearPlayer();
+      window.__NIGHT_ALLEY_DEBUG__?.spawnEnemyNearPlayer();
+    });
+    await page.waitForTimeout(180);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'gameplay.png') });
   });
 
@@ -166,5 +171,122 @@ test.describe('Night Alley greybox prototype smoke', () => {
     expect(restarted.kills).toBe(0);
     expect(restarted.level).toBe(1);
     expect(restarted.timeLeft).toBeGreaterThan(170);
+  });
+
+  test('6. moves player proportionally in drag direction via virtual joystick', async ({
+    page,
+  }) => {
+    await startGame(page);
+
+    const box = await page.locator('canvas').boundingBox();
+    expect(box).not.toBeNull();
+
+    const startX = box!.x + (300 / 960) * box!.width;
+    const startY = box!.y + (300 / 540) * box!.height;
+
+    const measureHorizontalDrag = async (logicalDx: number): Promise<number> => {
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      const before = await getDebugState(page);
+      const endX = box!.x + ((300 + logicalDx) / 960) * box!.width;
+
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      await page.mouse.move(endX, startY, { steps: 6 });
+      await page.waitForTimeout(800);
+      await page.mouse.up();
+
+      const after = await getDebugState(page);
+      return after.playerX - before.playerX;
+    };
+
+    const fullDelta = await measureHorizontalDrag(60);
+    const halfDelta = await measureHorizontalDrag(32);
+
+    expect(fullDelta).toBeGreaterThan(40);
+    expect(halfDelta).toBeGreaterThan(10);
+    expect(halfDelta).toBeLessThan(fullDelta * 0.8);
+  });
+
+  test('7. peach sword slash arc stays pinned at swing-time position while player moves', async ({
+    page,
+  }) => {
+    await startGame(page);
+
+    await page.keyboard.down('KeyD');
+    try {
+      const result = await page.evaluate(
+        () =>
+          new Promise<{
+            first: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            };
+            later: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            };
+          }>((resolve, reject) => {
+            const dbg = window.__NIGHT_ALLEY_DEBUG__;
+            if (!dbg) {
+              reject(new Error('Missing __NIGHT_ALLEY_DEBUG__'));
+              return;
+            }
+            dbg.spawnEnemyNearPlayer();
+
+            const startedAt = performance.now();
+            let first: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            } | null = null;
+            let later: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            } | null = null;
+
+            const step = (): void => {
+              const state = dbg.getState();
+              const activeSlash = state.slashes?.[0];
+
+              if (!first) {
+                if (activeSlash) {
+                  first = { playerX: state.playerX, slash: { ...activeSlash } };
+                  later = { playerX: state.playerX, slash: { ...activeSlash } };
+                }
+              } else if (activeSlash) {
+                later = { playerX: state.playerX, slash: { ...activeSlash } };
+                if (state.playerX - first.playerX >= 8) {
+                  resolve({ first, later });
+                  return;
+                }
+              } else {
+                resolve({ first, later: later ?? first });
+                return;
+              }
+
+              if (performance.now() - startedAt > 2000) {
+                reject(new Error('Timed out waiting for slash arc observation'));
+                return;
+              }
+              requestAnimationFrame(step);
+            };
+
+            requestAnimationFrame(step);
+          }),
+      );
+
+      expect(result.later.playerX - result.first.playerX).toBeGreaterThanOrEqual(5);
+      expect(result.later.slash.x).toBe(result.first.slash.x);
+      expect(result.later.slash.y).toBe(result.first.slash.y);
+      expect(result.later.slash.rotation).toBe(result.first.slash.rotation);
+      expect(result.first.slash.displayWidth).toBeGreaterThan(150);
+      expect(result.first.slash.displayHeight).toBeGreaterThan(150);
+    } finally {
+      await page.keyboard.up('KeyD');
+    }
   });
 });

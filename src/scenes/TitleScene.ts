@@ -6,8 +6,8 @@ import {
   ROUND_DURATION_SECONDS,
 } from '../game/balance.ts';
 import { registerDebugHook } from '../game/debug.ts';
-
-const FONT_FAMILY = 'monospace, sans-serif';
+import { addPixelText } from '../game/pixelFont.ts';
+import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
 
 export class TitleScene extends Phaser.Scene {
   constructor() {
@@ -15,69 +15,82 @@ export class TitleScene extends Phaser.Scene {
   }
 
   create(): void {
-    // Simple greybox night-alley backdrop using colored blocks and circles
-    this.add.rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, ARENA_WIDTH, ARENA_HEIGHT, 0x14101c);
-    this.add.rectangle(110, ARENA_HEIGHT / 2, 180, ARENA_HEIGHT, 0x1b1626);
-    this.add.rectangle(ARENA_WIDTH - 110, ARENA_HEIGHT / 2, 180, ARENA_HEIGHT, 0x1b1626);
-    this.add.rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, 420, ARENA_HEIGHT, 0x181322);
+    ensureGameTextures(this);
+    buildNightAlleyBackdrop(this, 0);
 
-    // Subtle lantern & shadow block accents
-    this.add.circle(480, 145, 90, 0xe8b34b, 0.08);
-    this.add.circle(480, 145, 42, 0xe8b34b, 0.14);
-    this.add.circle(260, 390, 10, 0x9a8fb5, 0.55);
-    this.add.circle(705, 370, 10, 0x9a8fb5, 0.55);
-    this.add.circle(735, 415, 10, 0x9a8fb5, 0.45);
+    // Pixel showcase sprites flanking the start button
+    this.add.image(210, 322, 'player_idle').setDepth(5);
+    this.add.image(730, 304, 'enemy_paper').setFlipX(true).setDepth(5);
+    this.add.image(782, 344, 'enemy_lantern').setFlipX(true).setDepth(5);
+
+    // Title + shadow (48px = 4x 12px source)
+    addPixelText(this, ARENA_WIDTH / 2 + 2, 76 + 2, '夜 巷', {
+      size: 48,
+      color: PALETTE.inkBlack,
+      origin: 0.5,
+    }).setDepth(10);
+    addPixelText(this, ARENA_WIDTH / 2, 76, '夜 巷', {
+      size: 48,
+      color: PALETTE.paperWhite,
+      origin: 0.5,
+    }).setDepth(11);
+
+    addPixelText(this, ARENA_WIDTH / 2 + 2, 132 + 2, 'NIGHT ALLEY', {
+      size: 48,
+      color: PALETTE.inkBlack,
+      origin: 0.5,
+    }).setDepth(10);
+    addPixelText(this, ARENA_WIDTH / 2, 132, 'NIGHT ALLEY', {
+      size: 48,
+      color: PALETTE.lanternYellow,
+      origin: 0.5,
+    }).setDepth(11);
+
+    addPixelText(this, ARENA_WIDTH / 2, 182, '1987 · 老城夜巷', {
+      size: 24,
+      color: PALETTE.oldPaper,
+      origin: 0.5,
+    }).setDepth(11);
 
     this.add
-      .text(ARENA_WIDTH / 2, 118, '夜 巷', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '56px',
-        fontStyle: 'bold',
-        color: '#f2e3c6',
-      })
-      .setOrigin(0.5);
-
-    this.add
-      .text(ARENA_WIDTH / 2, 174, '1987 · 老城夜巷', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '18px',
-        color: '#c9973f',
-      })
-      .setOrigin(0.5);
-
-    this.add
-      .text(ARENA_WIDTH / 2, 232, '守夜学徒手持桃木剑，在成群心魔中活到天亮（3 分钟）', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '18px',
-        color: '#d4cde0',
-      })
-      .setOrigin(0.5);
+      .rectangle(ARENA_WIDTH / 2, 234, 680, 38, 0x10182b)
+      .setStrokeStyle(2, 0x2e4a73)
+      .setDepth(10);
+    addPixelText(
+      this,
+      ARENA_WIDTH / 2,
+      234,
+      '守夜学徒手持桃木剑，在成群心魔中活到天亮（3 分钟）',
+      {
+        size: 24,
+        color: PALETTE.candleLight,
+        origin: 0.5,
+      },
+    ).setDepth(11);
 
     const startBtn = this.add
-      .rectangle(ARENA_WIDTH / 2, 320, 220, 54, 0x2e2118)
+      .rectangle(ARENA_WIDTH / 2, 320, 220, 56, 0x2e2118)
       .setStrokeStyle(2, 0xe8b34b)
+      .setDepth(10)
       .setInteractive({ useHandCursor: true });
 
-    const startLabel = this.add
-      .text(ARENA_WIDTH / 2, 320, '开始守夜', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '22px',
-        fontStyle: 'bold',
-        color: '#f2e3c6',
-      })
-      .setOrigin(0.5);
+    const startLabel = addPixelText(this, ARENA_WIDTH / 2, 320, '开始守夜', {
+      size: 24,
+      color: PALETTE.paperWhite,
+      origin: 0.5,
+    }).setDepth(11);
 
     const startGame = (): void => {
       this.scene.start('GameScene');
     };
 
     startBtn.on('pointerover', () => {
-      startBtn.setFillStyle(0x412e21);
-      startLabel.setColor('#ffe5a3');
+      startBtn.setFillStyle(0x5a3a22);
+      startLabel.setTint(0xe8b34b);
     });
     startBtn.on('pointerout', () => {
       startBtn.setFillStyle(0x2e2118);
-      startLabel.setColor('#f2e3c6');
+      startLabel.setTint(0xfbf6e9);
     });
     startBtn.on('pointerdown', startGame);
 
@@ -85,12 +98,20 @@ export class TitleScene extends Phaser.Scene {
     this.input.keyboard?.once('keydown-SPACE', startGame);
 
     this.add
-      .text(ARENA_WIDTH / 2, 412, 'WASD / 方向键 或 按住拖动移动 · 自动攻击 · 升级三选一', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '15px',
-        color: '#9a8fb5',
-      })
-      .setOrigin(0.5);
+      .rectangle(ARENA_WIDTH / 2, 434, 710, 38, 0x10182b)
+      .setStrokeStyle(2, 0x2e4a73)
+      .setDepth(10);
+    addPixelText(
+      this,
+      ARENA_WIDTH / 2,
+      434,
+      'WASD / 方向键 或 按住拖动移动 · 自动攻击 · 升级三选一',
+      {
+        size: 24,
+        color: PALETTE.silverBlue,
+        origin: 0.5,
+      },
+    ).setDepth(11);
 
     registerDebugHook({
       getState: () => ({

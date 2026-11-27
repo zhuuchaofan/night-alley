@@ -72,6 +72,8 @@ export interface DebugState {
   enemies: number;
   maxConcurrent: number;
   weapons: WeaponId[];
+  evolvedWeapons: WeaponId[];
+  loadoutText?: string;
   playerX: number;
   playerY: number;
   isLevelUpOpen: boolean;

@@ -6,6 +6,7 @@ import {
   BOSS_STATS,
   BOSS_XP_ORBS,
   createInitialPlayerStats,
+  displayWeaponName,
   ENEMY_RADIUS,
   enemyStatsAt,
   formatTime,
@@ -18,7 +19,6 @@ import {
   ROUND_DURATION_SECONDS,
   SPAWN_MARGIN,
   spawnIntervalAt,
-  WEAPON_DEFS,
   WEAPON_ORDER,
   XP_PER_ORB,
   xpNeededForLevel,
@@ -159,6 +159,7 @@ const CHOICE_CARD_H = 210;
 const CATEGORY_LABEL: Record<ChoiceOption['category'], { text: string; color: string }> = {
   new_weapon: { text: '新武器', color: PALETTE.lanternYellow },
   weapon_upgrade: { text: '武器强化', color: PALETTE.silverBlue },
+  evolution: { text: '武器进化', color: PALETTE.lanternYellow },
   stat: { text: '属性提升', color: PALETTE.jadeGreen },
 };
 
@@ -501,6 +502,8 @@ export class GameScene extends Phaser.Scene {
         enemies: this.enemies.length,
         maxConcurrent: this.maxConcurrent,
         weapons: WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id])),
+        evolvedWeapons: WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id]?.evolved)),
+        loadoutText: this.loadoutText.text,
         playerX: Math.round(this.playerX * 100) / 100,
         playerY: Math.round(this.playerY * 100) / 100,
         isLevelUpOpen: this.isLevelUpOpen,
@@ -915,7 +918,7 @@ export class GameScene extends Phaser.Scene {
             sword.arcDeg,
           );
           const slashSprite = this.add
-            .image(placement.x, placement.y, 'slash_arc')
+            .image(placement.x, placement.y, sword.evolved ? 'slash_arc_evolved' : 'slash_arc')
             .setRotation(placement.rotation)
             .setDisplaySize(placement.displayWidth, placement.displayHeight)
             .setDepth(11);
@@ -957,8 +960,8 @@ export class GameScene extends Phaser.Scene {
               angle += (i % 2 === 0 ? 1 : -1) * step * 0.14;
             }
             const dartSprite = this.add
-              .image(this.playerX, this.playerY, 'coin_dart')
-              .setDisplaySize(24, 24)
+              .image(this.playerX, this.playerY, dart.evolved ? 'coin_dart_evolved' : 'coin_dart')
+              .setDisplaySize(dart.evolved ? 28 : 24, dart.evolved ? 28 : 24)
               .setDepth(11);
             this.darts.push({
               x: this.playerX,
@@ -1055,7 +1058,10 @@ export class GameScene extends Phaser.Scene {
       const dy = this.playerY - orb.y;
       const dist = Math.hypot(dx, dy);
 
-      if (dist <= collectRadius) {
+      // Do not vacuum the orb mid-scatter: the 0.24s scatter is the visible
+      // payoff of a kill, and a close-range kill would otherwise collect the
+      // orb in the same update it spawns, so the scatter is never seen.
+      if (orb.scatterTimer <= 0 && dist <= collectRadius) {
         orb.sprite.destroy();
         this.orbs.splice(i, 1);
         this.gainXp(XP_PER_ORB);
@@ -1357,10 +1363,15 @@ export class GameScene extends Phaser.Scene {
       const cx = CHOICE_CARD_X[idx];
       const cy = CHOICE_CARD_Y;
       const badge = CATEGORY_LABEL[opt.category];
+      const isEvolution = opt.category === 'evolution';
+      const baseFill = isEvolution ? 0x2e2118 : 0x10182b;
+      const hoverFill = isEvolution ? 0x5a3a22 : 0x2e4a73;
+      const baseStroke = isEvolution ? 0xe8b34b : 0xc9973f;
+      const strokeWidth = isEvolution ? 4 : 2;
 
       const card = this.add
-        .rectangle(cx, cy, CHOICE_CARD_W, CHOICE_CARD_H, 0x10182b)
-        .setStrokeStyle(2, 0xc9973f)
+        .rectangle(cx, cy, CHOICE_CARD_W, CHOICE_CARD_H, baseFill)
+        .setStrokeStyle(strokeWidth, baseStroke)
         .setInteractive({ useHandCursor: true });
 
       const badgeText = addPixelText(this, cx, cy - 74, badge.text, {
@@ -1397,12 +1408,12 @@ export class GameScene extends Phaser.Scene {
       );
 
       card.on('pointerover', () => {
-        card.setFillStyle(0x2e4a73);
-        card.setStrokeStyle(2, 0xe8b34b);
+        card.setFillStyle(hoverFill);
+        card.setStrokeStyle(strokeWidth, 0xe8b34b);
       });
       card.on('pointerout', () => {
-        card.setFillStyle(0x10182b);
-        card.setStrokeStyle(2, 0xc9973f);
+        card.setFillStyle(baseFill);
+        card.setStrokeStyle(strokeWidth, baseStroke);
       });
       card.on('pointerdown', () => {
         this.chooseOption(opt);
@@ -1446,7 +1457,10 @@ export class GameScene extends Phaser.Scene {
     this.killsText.setText(`击杀 ${this.kills}`);
 
     const loadout = WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id]))
-      .map((id) => `${WEAPON_DEFS[id].name} Lv.${this.stats.weapons[id]!.level}`)
+      .map((id) => {
+        const weapon = this.stats.weapons[id]!;
+        return `${displayWeaponName(weapon)} Lv.${weapon.level}`;
+      })
       .join(' · ');
     this.loadoutText.setText(loadout);
     this.loadoutBg.setSize(Math.max(120, Math.round(this.loadoutText.width) + 18), 30);
@@ -1459,9 +1473,10 @@ export class GameScene extends Phaser.Scene {
     // Lantern fire pixel ring
     const lantern = this.stats.weapons.lantern_fire;
     if (lantern && this.lanternActiveRemaining > 0) {
-      const ringKey = Math.floor(this.lanternAnimTimer / 0.14) % 2 === 0
-        ? 'lantern_ring_1'
-        : 'lantern_ring_2';
+      const frameIdx = Math.floor(this.lanternAnimTimer / 0.14) % 2 === 0 ? 1 : 2;
+      const ringKey = lantern.evolved
+        ? `lantern_ring_${frameIdx}_evolved`
+        : `lantern_ring_${frameIdx}`;
       this.lanternRingSprite
         .setTexture(ringKey)
         .setPosition(Math.round(this.playerX), Math.round(this.playerY))

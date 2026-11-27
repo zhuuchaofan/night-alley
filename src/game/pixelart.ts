@@ -221,6 +221,28 @@ export function pixelRowsToSilhouetteTexture(
   return key;
 }
 
+function remapPalette(overrides: Partial<Record<number, string>>): string[] {
+  return PIXEL_PALETTE.map((hex, idx) => overrides[idx] ?? hex);
+}
+
+export const EVOLVED_SLASH_PALETTE = remapPalette({
+  4: PALETTE.vermilion, // #B03A2E
+  5: PALETTE.vermilion, // #B03A2E
+  6: PALETTE.oldPaper, // #D9A066
+});
+
+export const EVOLVED_DART_PALETTE = remapPalette({
+  3: PALETTE.nightBlue, // #2E4A73
+  4: PALETTE.fogBlue, // #4E739E
+  5: PALETTE.silverBlue, // #8FA8C8
+});
+
+export const EVOLVED_LANTERN_PALETTE = remapPalette({
+  5: PALETTE.candleLight, // #F2E3C6
+  6: PALETTE.paperWhite, // #FBF6E9
+  13: PALETTE.jadeGreen, // #4E7A5A
+});
+
 /**
  * Registers all game pixel art textures and Canvas2D hit-flash silhouettes idempotently.
  */
@@ -229,6 +251,21 @@ export function ensureGameTextures(scene: Phaser.Scene): void {
   for (const key of keys) {
     pixelRowsToTexture(scene, key, GAME_PIXEL_ART[key]);
   }
+
+  pixelRowsToTexture(scene, 'slash_arc_evolved', GAME_PIXEL_ART.slash_arc, EVOLVED_SLASH_PALETTE);
+  pixelRowsToTexture(scene, 'coin_dart_evolved', GAME_PIXEL_ART.coin_dart, EVOLVED_DART_PALETTE);
+  pixelRowsToTexture(
+    scene,
+    'lantern_ring_1_evolved',
+    GAME_PIXEL_ART.lantern_ring_1,
+    EVOLVED_LANTERN_PALETTE,
+  );
+  pixelRowsToTexture(
+    scene,
+    'lantern_ring_2_evolved',
+    GAME_PIXEL_ART.lantern_ring_2,
+    EVOLVED_LANTERN_PALETTE,
+  );
 
   pixelRowsToSilhouetteTexture(scene, 'player_hit', GAME_PIXEL_ART.player_idle, PALETTE.vermilion);
   pixelRowsToSilhouetteTexture(scene, 'enemy_paper_hit', GAME_PIXEL_ART.enemy_paper, PALETTE.paperWhite);

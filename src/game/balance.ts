@@ -88,9 +88,38 @@ export const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
   },
 };
 
+export const EVOLUTION_MIN_LEVEL = 5;
+
+export interface EvolutionDef {
+  name: string;
+  damageMultiplier: number;
+  arcDegBonus?: number;
+  countBonus?: number;
+  rangeMultiplier?: number;
+}
+
+export const EVOLUTION_DEFS: Record<WeaponId, EvolutionDef> = {
+  peach_sword: {
+    name: '破魔法剑',
+    damageMultiplier: 2,
+    arcDegBonus: 40,
+  },
+  coin_dart: {
+    name: '九连钱镖',
+    damageMultiplier: 1.5,
+    countBonus: 2,
+  },
+  lantern_fire: {
+    name: '照夜魂灯',
+    damageMultiplier: 2,
+    rangeMultiplier: 1.5,
+  },
+};
+
 export interface WeaponState {
   id: WeaponId;
   level: number;
+  evolved: boolean;
   cooldown: number;
   range: number;
   arcDeg: number;
@@ -155,6 +184,7 @@ export function createInitialWeapon(id: WeaponId): WeaponState {
   return {
     id: def.id,
     level: 1,
+    evolved: false,
     cooldown: def.cooldown,
     range: def.range,
     arcDeg: def.arcDeg,
@@ -164,6 +194,11 @@ export function createInitialWeapon(id: WeaponId): WeaponState {
     duration: def.duration,
     tickInterval: def.tickInterval,
   };
+}
+
+/** Return the weapon's evolved name when evolved, otherwise its base name. */
+export function displayWeaponName(state: WeaponState): string {
+  return state.evolved ? EVOLUTION_DEFS[state.id].name : WEAPON_DEFS[state.id].name;
 }
 
 /** Create starting player stats with the Peach Wood Sword equipped. */

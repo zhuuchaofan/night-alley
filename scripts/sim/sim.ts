@@ -21,10 +21,15 @@
  *   blending lightly with any 120-200px flee pressure.
  *
  * Level-up choice priority:
- *   new:coin_dart > new:lantern_fire > upg:peach_sword:damage >
- *   lowest-level existing weapon damage > upg:coin_dart:count > upg:lantern_fire:range >
- *   stat:damage > stat:hp (when hp < 50% maxHp) > upg:peach_sword:speed >
- *   stat:speed > stat:pickup > stat:hp (when hp >= 50% maxHp).
+ *   evo:* > new:coin_dart > new:lantern_fire >
+ *   evolved weapon upgrades (preserving internal weapon-upgrade order:
+ *     upg:peach_sword:damage > lowest-level existing weapon damage >
+ *     upg:coin_dart:count > upg:lantern_fire:range > upg:peach_sword:speed) >
+ *   unevolved weapon upgrades & stats (existing order:
+ *     upg:peach_sword:damage > lowest-level existing weapon damage >
+ *     upg:coin_dart:count > upg:lantern_fire:range > stat:damage >
+ *     stat:hp (when hp < 50% maxHp) > upg:peach_sword:speed >
+ *     stat:speed > stat:pickup > stat:hp (when hp >= 50% maxHp)).
  */
 
 import {
@@ -35,6 +40,7 @@ import {
   BOSS_XP_ORBS,
   createInitialPlayerStats,
   enemyStatsAt,
+  EVOLUTION_DEFS,
   HUD_HEIGHT,
   MAX_ENEMIES,
   ORB_PULL_SPEED,
@@ -43,9 +49,11 @@ import {
   ROUND_DURATION_SECONDS,
   SPAWN_MARGIN,
   spawnIntervalAt,
+  WEAPON_ORDER,
   XP_PER_ORB,
   xpNeededForLevel,
   type PlayerStats,
+  type WeaponId,
 } from '../../src/game/balance.ts';
 import {
   applyChoice,
@@ -84,7 +92,17 @@ export interface RunResult {
   maxConcurrent: number;
   bossSpawned: boolean;
   bossKilled: boolean;
+  evolved: WeaponId[];
   hpTrajectory: number[];
+}
+
+export interface EvolutionRouteCounts {
+  none: number;
+  swordOnly: number;
+  dartOnly: number;
+  lanternOnly: number;
+  two: number;
+  three: number;
 }
 
 export interface SimSummary {
@@ -100,6 +118,9 @@ export interface SimSummary {
   bossKilledCount: number;
   bossKillRate: number;
   bossKillRateWhenSpawned: number;
+  evolutionRates: Record<WeaponId, number>;
+  anyEvolutionRate: number;
+  evolutionRouteCounts: EvolutionRouteCounts;
   avgHpTrajectory: number[];
   results: RunResult[];
 }
@@ -159,29 +180,37 @@ export function pickUpgradeChoice(stats: PlayerStats, options: ChoiceOption[]): 
 
   for (const opt of options) {
     let score = 100;
-    if (opt.id === 'new:coin_dart') {
+    if (opt.id.startsWith('evo:')) {
+      score = 0;
+    } else if (opt.id === 'new:coin_dart') {
       score = 1;
     } else if (opt.id === 'new:lantern_fire') {
       score = 2;
-    } else if (opt.id === 'upg:peach_sword:damage') {
-      score = 3;
-    } else if (opt.category === 'weapon_upgrade' && opt.upgradeKind === 'damage' && opt.weaponId) {
-      const level = stats.weapons[opt.weaponId]?.level ?? 1;
-      score = 4 + level * 0.01;
-    } else if (opt.id === 'upg:coin_dart:count') {
-      score = 5;
-    } else if (opt.id === 'upg:lantern_fire:range') {
-      score = 6;
+    } else if (opt.category === 'weapon_upgrade' && opt.weaponId) {
+      let base = 100;
+      if (opt.id === 'upg:peach_sword:damage') {
+        base = 3;
+      } else if (opt.upgradeKind === 'damage') {
+        const level = stats.weapons[opt.weaponId]?.level ?? 1;
+        base = 4 + level * 0.01;
+      } else if (opt.id === 'upg:coin_dart:count') {
+        base = 5;
+      } else if (opt.id === 'upg:lantern_fire:range') {
+        base = 6;
+      } else if (opt.id === 'upg:peach_sword:speed') {
+        base = 9;
+      }
+      if (base < 100) {
+        score = (stats.weapons[opt.weaponId]?.evolved ? 10 : 20) + base;
+      }
     } else if (opt.id === 'stat:damage') {
-      score = 7;
+      score = 27;
     } else if (opt.id === 'stat:hp') {
-      score = stats.hp < stats.maxHp * 0.5 ? 8 : 12;
-    } else if (opt.id === 'upg:peach_sword:speed') {
-      score = 9;
+      score = stats.hp < stats.maxHp * 0.5 ? 28 : 32;
     } else if (opt.id === 'stat:speed') {
-      score = 10;
+      score = 30;
     } else if (opt.id === 'stat:pickup') {
-      score = 11;
+      score = 31;
     }
 
     if (score < bestScore) {
@@ -699,6 +728,9 @@ export function runSingleSim(seed: number): RunResult {
     }
   };
 
+  const getEvolvedWeapons = (): WeaponId[] =>
+    WEAPON_ORDER.filter((id) => Boolean(stats.weapons[id]?.evolved));
+
   for (let step = 1; step <= SIM_TOTAL_STEPS; step += 1) {
     const elapsedSeconds = step * SIM_DT;
     if (step === SIM_TOTAL_STEPS) {
@@ -711,6 +743,7 @@ export function runSingleSim(seed: number): RunResult {
         maxConcurrent,
         bossSpawned,
         bossKilled,
+        evolved: getEvolvedWeapons(),
         hpTrajectory,
       };
     }
@@ -726,6 +759,7 @@ export function runSingleSim(seed: number): RunResult {
         maxConcurrent,
         bossSpawned,
         bossKilled,
+        evolved: getEvolvedWeapons(),
         hpTrajectory,
       };
     }
@@ -746,6 +780,7 @@ export function runSingleSim(seed: number): RunResult {
     maxConcurrent,
     bossSpawned,
     bossKilled,
+    evolved: getEvolvedWeapons(),
     hpTrajectory,
   };
 }
@@ -763,6 +798,20 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
   let totalMaxConcurrent = 0;
   let bossSpawnedCount = 0;
   let bossKilledCount = 0;
+  let anyEvolutionCount = 0;
+  const evolutionCounts: Record<WeaponId, number> = {
+    peach_sword: 0,
+    coin_dart: 0,
+    lantern_fire: 0,
+  };
+  const evolutionRouteCounts: EvolutionRouteCounts = {
+    none: 0,
+    swordOnly: 0,
+    dartOnly: 0,
+    lanternOnly: 0,
+    two: 0,
+    three: 0,
+  };
   const hpSums = new Array<number>(TRAJECTORY_POINTS).fill(0);
 
   for (let i = 0; i < runs; i += 1) {
@@ -773,6 +822,24 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
     if (res.won) wins += 1;
     if (res.bossSpawned) bossSpawnedCount += 1;
     if (res.bossKilled) bossKilledCount += 1;
+    for (const weaponId of res.evolved) {
+      evolutionCounts[weaponId] += 1;
+    }
+    if (res.evolved.length === 0) {
+      evolutionRouteCounts.none += 1;
+    } else {
+      anyEvolutionCount += 1;
+      if (res.evolved.length === 1) {
+        const only = res.evolved[0];
+        if (only === 'peach_sword') evolutionRouteCounts.swordOnly += 1;
+        else if (only === 'coin_dart') evolutionRouteCounts.dartOnly += 1;
+        else evolutionRouteCounts.lanternOnly += 1;
+      } else if (res.evolved.length === 2) {
+        evolutionRouteCounts.two += 1;
+      } else {
+        evolutionRouteCounts.three += 1;
+      }
+    }
     totalSurvived += res.survivedSeconds;
     totalKills += res.kills;
     totalLevel += res.level;
@@ -783,11 +850,12 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
   }
 
   const avgHpTrajectory = hpSums.map((sum) => (runs > 0 ? sum / runs : 0));
+  const pct = (count: number): number => (runs > 0 ? (count / runs) * 100 : 0);
 
   return {
     runs,
     seed,
-    winRate: runs > 0 ? (wins / runs) * 100 : 0,
+    winRate: pct(wins),
     avgSurvivedSeconds: runs > 0 ? totalSurvived / runs : 0,
     avgKills: runs > 0 ? totalKills / runs : 0,
     avgLevel: runs > 0 ? totalLevel / runs : 0,
@@ -795,8 +863,15 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
     avgHpAt30s: avgHpTrajectory[3] ?? 0,
     bossSpawnedCount,
     bossKilledCount,
-    bossKillRate: runs > 0 ? (bossKilledCount / runs) * 100 : 0,
+    bossKillRate: pct(bossKilledCount),
     bossKillRateWhenSpawned: bossSpawnedCount > 0 ? (bossKilledCount / bossSpawnedCount) * 100 : 0,
+    evolutionRates: {
+      peach_sword: pct(evolutionCounts.peach_sword),
+      coin_dart: pct(evolutionCounts.coin_dart),
+      lantern_fire: pct(evolutionCounts.lantern_fire),
+    },
+    anyEvolutionRate: pct(anyEvolutionCount),
+    evolutionRouteCounts,
     avgHpTrajectory,
     results,
   };
@@ -804,6 +879,10 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
 
 /** Format a SimSummary into readable ASCII tables for stdout. */
 export function formatSimSummary(summary: SimSummary): string {
+  const pctText = (count: number): string =>
+    `${(summary.runs > 0 ? (count / summary.runs) * 100 : 0).toFixed(1)}%`;
+  const anyEvoCount = summary.runs - summary.evolutionRouteCounts.none;
+
   const lines: string[] = [];
   lines.push(`=== Night Alley Headless Balance Sim (${summary.runs} runs, seed=${summary.seed}) ===`);
   lines.push('');
@@ -819,6 +898,29 @@ export function formatSimSummary(summary: SimSummary): string {
   lines.push(
     `| Boss Kill Rate | ${summary.bossKillRate.toFixed(1)}% (${summary.bossKilledCount}/${summary.runs}; ${summary.bossKillRateWhenSpawned.toFixed(1)}% of ${summary.bossSpawnedCount} spawned) |`,
   );
+  lines.push('');
+  lines.push('Evolution Summary:');
+  lines.push('| Metric | Value |');
+  lines.push('| --- | --- |');
+  lines.push(`| Any Evolution Rate | ${summary.anyEvolutionRate.toFixed(1)}% (${anyEvoCount}/${summary.runs}) |`);
+  for (const id of WEAPON_ORDER) {
+    lines.push(`| ${id} (${EVOLUTION_DEFS[id].name}) | ${summary.evolutionRates[id].toFixed(1)}% |`);
+  }
+  lines.push('');
+  lines.push('Evolution Route Distribution:');
+  lines.push('| Route | Count | Share |');
+  lines.push('| --- | --- | --- |');
+  const routeRows: [string, number][] = [
+    ['None (无进化)', summary.evolutionRouteCounts.none],
+    ['Sword Only (仅剑)', summary.evolutionRouteCounts.swordOnly],
+    ['Dart Only (仅镖)', summary.evolutionRouteCounts.dartOnly],
+    ['Lantern Only (仅火)', summary.evolutionRouteCounts.lanternOnly],
+    ['Two Evolved (两把)', summary.evolutionRouteCounts.two],
+    ['Three Evolved (三把)', summary.evolutionRouteCounts.three],
+  ];
+  for (const [label, count] of routeRows) {
+    lines.push(`| ${label} | ${count} | ${pctText(count)} |`);
+  }
   lines.push('');
   lines.push('Avg HP Trajectory (every 10s, dead=0):');
   lines.push('| Time (s) | Avg HP |');

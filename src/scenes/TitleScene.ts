@@ -125,6 +125,7 @@ export class TitleScene extends Phaser.Scene {
         enemies: 0,
         maxConcurrent: 0,
         weapons: ['peach_sword'],
+        evolvedWeapons: [],
         playerX: ARENA_WIDTH / 2,
         playerY: ARENA_HEIGHT / 2,
         isLevelUpOpen: false,

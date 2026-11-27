@@ -1,5 +1,7 @@
 import {
   createInitialWeapon,
+  EVOLUTION_DEFS,
+  EVOLUTION_MIN_LEVEL,
   PlayerStats,
   WEAPON_DEFS,
   WEAPON_ORDER,
@@ -7,7 +9,7 @@ import {
   WeaponState,
 } from './balance.ts';
 
-export type ChoiceCategory = 'new_weapon' | 'weapon_upgrade' | 'stat';
+export type ChoiceCategory = 'new_weapon' | 'weapon_upgrade' | 'evolution' | 'stat';
 
 export interface ChoiceOption {
   id: string;
@@ -82,6 +84,12 @@ const WEAPON_UPGRADE_OPTIONS: Record<WeaponId, ChoiceOption[]> = {
   ],
 };
 
+const EVOLUTION_DESC: Record<WeaponId, string> = {
+  peach_sword: '进化：伤害 ×2，\n挥砍弧形 +40',
+  coin_dart: '进化：数量 +2，\n伤害 ×1.5',
+  lantern_fire: '进化：伤害 ×2，\n范围 ×1.5',
+};
+
 const STAT_OPTIONS: ChoiceOption[] = [
   {
     id: 'stat:damage',
@@ -118,8 +126,19 @@ export function buildChoicePool(stats: PlayerStats): ChoiceOption[] {
   const pool: ChoiceOption[] = [];
 
   for (const weaponId of WEAPON_ORDER) {
-    if (stats.weapons[weaponId]) {
-      pool.push(...WEAPON_UPGRADE_OPTIONS[weaponId]);
+    const owned = stats.weapons[weaponId];
+    if (owned) {
+      if (owned.level >= EVOLUTION_MIN_LEVEL && !owned.evolved) {
+        pool.push({
+          id: `evo:${weaponId}`,
+          category: 'evolution',
+          title: EVOLUTION_DEFS[weaponId].name,
+          description: EVOLUTION_DESC[weaponId],
+          weaponId,
+        });
+      } else {
+        pool.push(...WEAPON_UPGRADE_OPTIONS[weaponId]);
+      }
     } else {
       pool.push({
         id: `new:${weaponId}`,
@@ -187,6 +206,26 @@ export function applyChoice(stats: PlayerStats, choice: ChoiceOption): PlayerSta
       weapon.count += 1;
     } else if (choice.upgradeKind === 'range') {
       weapon.range *= 1.3;
+    }
+    return next;
+  }
+
+  if (choice.category === 'evolution' && choice.weaponId) {
+    const weapon = next.weapons[choice.weaponId];
+    if (!weapon || weapon.evolved || weapon.level < EVOLUTION_MIN_LEVEL) {
+      return next;
+    }
+    const evo = EVOLUTION_DEFS[choice.weaponId];
+    weapon.evolved = true;
+    weapon.damage *= evo.damageMultiplier;
+    if (evo.arcDegBonus) {
+      weapon.arcDeg += evo.arcDegBonus;
+    }
+    if (evo.countBonus) {
+      weapon.count += evo.countBonus;
+    }
+    if (evo.rangeMultiplier) {
+      weapon.range *= evo.rangeMultiplier;
     }
     return next;
   }

@@ -1,16 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA_HEIGHT, ARENA_WIDTH, ENEMY_RADIUS, HUD_HEIGHT } from '../../src/game/balance.ts';
+import {
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
+  BOSS_XP_ORBS,
+  HUD_HEIGHT,
+  PLAYER_RADIUS,
+} from '../../src/game/balance.ts';
 import {
   applyKnockbackImpulse,
+  BOSS_RENDER_HALF_WIDTH,
   canMergeDamageNumber,
+  computeBossOrbSpawnPos,
   computeClampedRenderPos,
   computeDamageNumberAlpha,
+  computeDamageNumberPos,
+  computeOrbScatterOffset,
   computeOrbScatterVelocity,
   computeSwingPose,
   DAMAGE_NUMBER_DURATION,
+  DAMAGE_NUMBER_HUD_PADDING,
+  DAMAGE_NUMBER_MARGIN_X,
   DAMAGE_NUMBER_MAX_MERGED_LIFE,
   DAMAGE_NUMBER_MERGE_WINDOW,
   decayKnockbackOffset,
+  ENEMY_RENDER_HALF_WIDTH,
   formatDamageNumber,
   KNOCKBACK_MAX_BOSS,
   KNOCKBACK_MAX_NORMAL,
@@ -70,28 +83,64 @@ describe('gameFeel helpers', () => {
     expect(zeroed).toEqual({ x: 0, y: 0 });
   });
 
-  it('clamps render knockback inside arena bounds without teleporting off-screen spawns', () => {
-    const clampedRightTop = computeClampedRenderPos(
-      ARENA_WIDTH - ENEMY_RADIUS - 2,
-      HUD_HEIGHT + ENEMY_RADIUS + 1,
+  it('clamps render knockback by sprite visible half-width without teleporting off-screen spawns', () => {
+    const clampedNormalRightTop = computeClampedRenderPos(
+      ARENA_WIDTH - ENEMY_RENDER_HALF_WIDTH - 2,
+      HUD_HEIGHT + ENEMY_RENDER_HALF_WIDTH + 1,
       12,
       -10,
-      ENEMY_RADIUS,
+      ENEMY_RENDER_HALF_WIDTH,
     );
-    expect(clampedRightTop.x).toBe(ARENA_WIDTH - ENEMY_RADIUS);
-    expect(clampedRightTop.y).toBe(HUD_HEIGHT + ENEMY_RADIUS);
+    expect(clampedNormalRightTop.x).toBe(ARENA_WIDTH - ENEMY_RENDER_HALF_WIDTH);
+    expect(clampedNormalRightTop.y).toBe(HUD_HEIGHT + ENEMY_RENDER_HALF_WIDTH);
 
-    const clampedBottom = computeClampedRenderPos(
+    const clampedNormalBottom = computeClampedRenderPos(
       100,
-      ARENA_HEIGHT - ENEMY_RADIUS - 1,
+      ARENA_HEIGHT - ENEMY_RENDER_HALF_WIDTH - 1,
       0,
       12,
-      ENEMY_RADIUS,
+      ENEMY_RENDER_HALF_WIDTH,
     );
-    expect(clampedBottom.y).toBe(ARENA_HEIGHT - ENEMY_RADIUS);
+    expect(clampedNormalBottom.y).toBe(ARENA_HEIGHT - ENEMY_RENDER_HALF_WIDTH);
 
-    const offscreen = computeClampedRenderPos(-30, 200, 0, 0, ENEMY_RADIUS);
-    expect(offscreen).toEqual({ x: -30, y: 200 });
+    const clampedBoss = computeClampedRenderPos(
+      ARENA_WIDTH - BOSS_RENDER_HALF_WIDTH - 1,
+      HUD_HEIGHT + BOSS_RENDER_HALF_WIDTH + 2,
+      5,
+      -5,
+      BOSS_RENDER_HALF_WIDTH,
+    );
+    expect(clampedBoss.x).toBe(ARENA_WIDTH - BOSS_RENDER_HALF_WIDTH);
+    expect(clampedBoss.y).toBe(HUD_HEIGHT + BOSS_RENDER_HALF_WIDTH);
+
+    // Wall-hugging enemy already inside half-width stays at its logical position without inward snap
+    const wallHugger = computeClampedRenderPos(20, 200, -10, 0, ENEMY_RENDER_HALF_WIDTH);
+    expect(wallHugger).toEqual({ x: 20, y: 200 });
+
+    const offscreenNormal = computeClampedRenderPos(-30, 200, 0, 0, ENEMY_RENDER_HALF_WIDTH);
+    expect(offscreenNormal).toEqual({ x: -30, y: 200 });
+
+    const offscreenBoss = computeClampedRenderPos(ARENA_WIDTH + 30, 200, 0, 0, BOSS_RENDER_HALF_WIDTH);
+    expect(offscreenBoss).toEqual({ x: ARENA_WIDTH + 30, y: 200 });
+  });
+
+  it('clamps floating damage numbers consistently on both create and merge paths', () => {
+    // Merge path (no spread) near left/top/right walls
+    const mergedTopLeft = computeDamageNumberPos(4, HUD_HEIGHT + 5, 24);
+    expect(mergedTopLeft.x).toBe(DAMAGE_NUMBER_MARGIN_X);
+    expect(mergedTopLeft.y).toBe(HUD_HEIGHT + DAMAGE_NUMBER_HUD_PADDING);
+
+    const mergedTopRightBoss = computeDamageNumberPos(ARENA_WIDTH - 5, HUD_HEIGHT + 12, 42);
+    expect(mergedTopRightBoss.x).toBe(ARENA_WIDTH - DAMAGE_NUMBER_MARGIN_X);
+    expect(mergedTopRightBoss.y).toBe(HUD_HEIGHT + DAMAGE_NUMBER_HUD_PADDING);
+
+    // Create path with ±6 spread still respects bounds near edges and spreads in interior
+    const createdEdge = computeDamageNumberPos(16, HUD_HEIGHT + 80, 24, -6);
+    expect(createdEdge.x).toBe(DAMAGE_NUMBER_MARGIN_X);
+    expect(createdEdge.y).toBe(HUD_HEIGHT + 56);
+
+    const createdInterior = computeDamageNumberPos(400, 300, 24, 6);
+    expect(createdInterior).toEqual({ x: 406, y: 276 });
   });
 
   it('formats damage numbers with only ASCII digits present in pixelFont', () => {
@@ -144,5 +193,36 @@ describe('gameFeel helpers', () => {
     const boss10 = computeOrbScatterVelocity(10, 20, () => 0.5);
     expect(boss0.vx).toBeGreaterThan(0);
     expect(boss10.vx).toBeLessThan(0);
+  });
+
+  it('computes render-only orb scatter offset that peaks mid-flight and returns to zero', () => {
+    const maxTimer = 0.24;
+    expect(computeOrbScatterOffset(100, -50, maxTimer, maxTimer)).toEqual({ x: 0, y: -0 });
+    expect(computeOrbScatterOffset(100, -50, 0, maxTimer)).toEqual({ x: 0, y: 0 });
+    expect(computeOrbScatterOffset(100, -50, -0.1, maxTimer)).toEqual({ x: 0, y: 0 });
+
+    const mid = computeOrbScatterOffset(100, -50, maxTimer * 0.5, maxTimer);
+    expect(mid.x).toBeGreaterThan(0);
+    expect(mid.y).toBeLessThan(0);
+  });
+
+  it('distributes Boss XP orbs radially 10-42px around death point and clamps inside arena', () => {
+    const originX = 480;
+    const originY = 300;
+    const angles = new Set<number>();
+    for (let k = 0; k < BOSS_XP_ORBS; k += 1) {
+      const pos = computeBossOrbSpawnPos(originX, originY, k, BOSS_XP_ORBS, () => 0.5);
+      const dist = Math.hypot(pos.x - originX, pos.y - originY);
+      expect(dist).toBeGreaterThanOrEqual(10 - 1e-6);
+      expect(dist).toBeLessThanOrEqual(42 + 1e-6);
+      angles.add(Math.round(Math.atan2(pos.y - originY, pos.x - originX) * 10));
+    }
+    expect(angles.size).toBeGreaterThanOrEqual(10);
+
+    const cornerOrb = computeBossOrbSpawnPos(0, 0, 10, BOSS_XP_ORBS, () => 0.5);
+    expect(cornerOrb.x).toBeGreaterThanOrEqual(PLAYER_RADIUS);
+    expect(cornerOrb.x).toBeLessThanOrEqual(ARENA_WIDTH - PLAYER_RADIUS);
+    expect(cornerOrb.y).toBeGreaterThanOrEqual(HUD_HEIGHT + PLAYER_RADIUS);
+    expect(cornerOrb.y).toBeLessThanOrEqual(ARENA_HEIGHT - PLAYER_RADIUS);
   });
 });

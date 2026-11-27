@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ARENA_WIDTH } from '../../src/game/balance.ts';
+import { ARENA_WIDTH, PLAYER_PICKUP_RADIUS } from '../../src/game/balance.ts';
 import type { DebugState } from '../../src/game/debug.ts';
 import { MAX_DAMAGE_NUMBERS } from '../../src/game/gameFeel.ts';
 import { startGame } from './helpers.ts';
@@ -237,5 +237,140 @@ test.describe('Night Alley game feel (stage 2)', () => {
     expect(observed.peakNumbers).toBeGreaterThan(0);
     expect(observed.peakNumbers).toBeLessThanOrEqual(MAX_DAMAGE_NUMBERS);
     expect(observed.neverExceededCap).toBe(true);
+  });
+
+  test('17. orb scatter animation is render-only and preserves logical pickup coordinates', async ({
+    page,
+  }) => {
+    await startGame(page);
+
+    await page.evaluate(() => {
+      window.__NIGHT_ALLEY_DEBUG__?.spawnEnemyNearPlayer();
+    });
+
+    await page.waitForFunction(
+      () => {
+        const s = window.__NIGHT_ALLEY_DEBUG__?.getState();
+        const enemy = s?.gameFeel?.enemies[0];
+        return Boolean(s && enemy && enemy.x - s.playerX <= 36);
+      },
+      undefined,
+      { timeout: 4000 },
+    );
+
+    await page.keyboard.down('ArrowLeft');
+
+    const observed = await page.evaluate(
+      (pickupRadius) =>
+        new Promise<{
+          sawKill: boolean;
+          sawScattering: boolean;
+          maxLogicalDrift: number;
+          maxVisualOffset: number;
+          finishedWhileOutside: boolean;
+        }>((resolve, reject) => {
+          const dbg = window.__NIGHT_ALLEY_DEBUG__;
+          if (!dbg) {
+            reject(new Error('Missing __NIGHT_ALLEY_DEBUG__'));
+            return;
+          }
+
+          const startedAt = performance.now();
+          let initialX: number | null = null;
+          let initialY: number | null = null;
+          let sawKill = false;
+          let sawScattering = false;
+          let maxLogicalDrift = 0;
+          let maxVisualOffset = 0;
+
+          const step = (): void => {
+            const state = dbg.getState();
+            const gf = state.gameFeel;
+            if (!gf) {
+              reject(new Error('Missing gameFeel debug state'));
+              return;
+            }
+
+            if (state.kills >= 1) {
+              sawKill = true;
+            }
+
+            if (sawKill && gf.orbs.length > 0) {
+              const candidate =
+                initialX === null
+                  ? gf.orbs.find(
+                      (orb) => Math.hypot(orb.x - state.playerX, orb.y - state.playerY) > pickupRadius + 5,
+                    )
+                  : gf.orbs[0];
+
+              if (candidate) {
+                if (initialX === null || initialY === null) {
+                  initialX = candidate.x;
+                  initialY = candidate.y;
+                }
+                const distToPlayer = Math.hypot(
+                  candidate.x - state.playerX,
+                  candidate.y - state.playerY,
+                );
+                if (distToPlayer > pickupRadius) {
+                  maxLogicalDrift = Math.max(
+                    maxLogicalDrift,
+                    Math.hypot(candidate.x - initialX, candidate.y - initialY),
+                  );
+                  if (candidate.scattering) {
+                    sawScattering = true;
+                    maxVisualOffset = Math.max(
+                      maxVisualOffset,
+                      Math.hypot(candidate.renderX - candidate.x, candidate.renderY - candidate.y),
+                    );
+                  } else if (sawScattering) {
+                    resolve({
+                      sawKill,
+                      sawScattering,
+                      maxLogicalDrift,
+                      maxVisualOffset,
+                      finishedWhileOutside: true,
+                    });
+                    return;
+                  }
+                }
+              }
+            }
+
+            if (performance.now() - startedAt > 4000) {
+              resolve({
+                sawKill,
+                sawScattering,
+                maxLogicalDrift,
+                maxVisualOffset,
+                finishedWhileOutside: false,
+              });
+              return;
+            }
+            requestAnimationFrame(step);
+          };
+
+          requestAnimationFrame(step);
+        }),
+      PLAYER_PICKUP_RADIUS,
+    );
+
+    await page.keyboard.up('ArrowLeft');
+
+    await page.keyboard.down('ArrowRight');
+    await page.waitForFunction(
+      () => (window.__NIGHT_ALLEY_DEBUG__?.getState().xp ?? 0) >= 1,
+      undefined,
+      { timeout: 4000 },
+    );
+    await page.keyboard.up('ArrowRight');
+
+    const xpAfterWalkBack = await page.evaluate(() => window.__NIGHT_ALLEY_DEBUG__?.getState().xp ?? 0);
+
+    expect(observed.sawScattering).toBe(true);
+    expect(observed.finishedWhileOutside).toBe(true);
+    expect(observed.maxLogicalDrift).toBeLessThanOrEqual(0.01);
+    expect(observed.maxVisualOffset).toBeGreaterThan(2);
+    expect(xpAfterWalkBack).toBeGreaterThanOrEqual(1);
   });
 });

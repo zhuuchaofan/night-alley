@@ -1,4 +1,4 @@
-import { ARENA_HEIGHT, ARENA_WIDTH, HUD_HEIGHT } from './balance.ts';
+import { ARENA_HEIGHT, ARENA_WIDTH, HUD_HEIGHT, PLAYER_RADIUS } from './balance.ts';
 
 export const ENEMY_HIT_FLASH_DURATION = 0.12;
 export const PLAYER_HIT_FLASH_DURATION = 0.14;
@@ -16,14 +16,19 @@ export const KNOCKBACK_MAX_NORMAL = 12;
 export const KNOCKBACK_IMPULSE_BOSS = 4;
 export const KNOCKBACK_MAX_BOSS = 5;
 export const KNOCKBACK_DECAY_SPEED = 85;
+export const ENEMY_RENDER_HALF_WIDTH = 32;
+export const BOSS_RENDER_HALF_WIDTH = 64;
 
 export const DAMAGE_NUMBER_DURATION = 0.55;
 export const DAMAGE_NUMBER_MERGE_WINDOW = 0.22;
 export const DAMAGE_NUMBER_MAX_MERGED_LIFE = 0.65;
 export const MAX_DAMAGE_NUMBERS = 18;
 export const DAMAGE_NUMBER_RISE_SPEED = 44;
+export const DAMAGE_NUMBER_MARGIN_X = 20;
+export const DAMAGE_NUMBER_HUD_PADDING = 16;
 
 export const MAX_BURST_PARTICLES = 120;
+export const ORB_SCATTER_VISUAL_SCALE = 0.4;
 
 export interface SwingPose {
   active: boolean;
@@ -146,15 +151,30 @@ export function computeClampedRenderPos(
   logicalY: number,
   offsetX: number,
   offsetY: number,
-  radius: number,
+  halfWidth: number,
 ): Offset2D {
-  const minX = Math.min(logicalX, radius);
-  const maxX = Math.max(logicalX, ARENA_WIDTH - radius);
-  const minY = Math.min(logicalY, HUD_HEIGHT + radius);
-  const maxY = Math.max(logicalY, ARENA_HEIGHT - radius);
+  const minX = Math.min(logicalX, halfWidth);
+  const maxX = Math.max(logicalX, ARENA_WIDTH - halfWidth);
+  const minY = Math.min(logicalY, HUD_HEIGHT + halfWidth);
+  const maxY = Math.max(logicalY, ARENA_HEIGHT - halfWidth);
   return {
     x: clamp(logicalX + offsetX, minX, maxX),
     y: clamp(logicalY + offsetY, minY, maxY),
+  };
+}
+
+/**
+ * Computes clamped coordinates for a floating damage number (shared by create and merge paths).
+ */
+export function computeDamageNumberPos(
+  enemyX: number,
+  enemyY: number,
+  yOffset: number,
+  spreadX = 0,
+): Offset2D {
+  return {
+    x: clamp(enemyX + spreadX, DAMAGE_NUMBER_MARGIN_X, ARENA_WIDTH - DAMAGE_NUMBER_MARGIN_X),
+    y: Math.max(HUD_HEIGHT + DAMAGE_NUMBER_HUD_PADDING, enemyY - yOffset),
   };
 }
 
@@ -215,5 +235,49 @@ export function computeOrbScatterVelocity(
     vy: Math.sin(angle) * speed,
     duration: 0.24,
     hopPeak: 9,
+  };
+}
+
+/**
+ * Computes the visual-only scatter offset for a dropped XP orb.
+ * Peaks mid-flight and decays smoothly back to (0, 0) as scatterTimer reaches 0.
+ */
+export function computeOrbScatterOffset(
+  vx: number,
+  vy: number,
+  scatterTimer: number,
+  scatterMaxTimer: number,
+): Offset2D {
+  if (scatterTimer <= 0 || scatterMaxTimer <= 0) {
+    return { x: 0, y: 0 };
+  }
+  const progress = clamp(1 - scatterTimer / scatterMaxTimer, 0, 1);
+  const arc = Math.sin(progress * Math.PI);
+  const factor = scatterMaxTimer * ORB_SCATTER_VISUAL_SCALE * arc;
+  return {
+    x: vx * factor,
+    y: vy * factor,
+  };
+}
+
+/**
+ * Restores radial 10-42px logical spawn distribution for Boss XP orbs, clamped inside arena.
+ */
+export function computeBossOrbSpawnPos(
+  originX: number,
+  originY: number,
+  index: number,
+  total: number,
+  rng: () => number = Math.random,
+): Offset2D {
+  const angle = (index / total) * Math.PI * 2 + rng() * 0.25;
+  const dist = 10 + rng() * 32;
+  return {
+    x: clamp(originX + Math.cos(angle) * dist, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS),
+    y: clamp(
+      originY + Math.sin(angle) * dist,
+      HUD_HEIGHT + PLAYER_RADIUS,
+      ARENA_HEIGHT - PLAYER_RADIUS,
+    ),
   };
 }

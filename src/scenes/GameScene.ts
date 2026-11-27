@@ -34,15 +34,20 @@ import {
 import { addPixelText, wrapPixelText } from '../game/pixelFont.ts';
 import {
   applyKnockbackImpulse,
+  BOSS_RENDER_HALF_WIDTH,
   canMergeDamageNumber,
+  computeBossOrbSpawnPos,
   computeClampedRenderPos,
   computeDamageNumberAlpha,
+  computeDamageNumberPos,
+  computeOrbScatterOffset,
   computeOrbScatterVelocity,
   computeSwingPose,
   DAMAGE_NUMBER_DURATION,
   DAMAGE_NUMBER_RISE_SPEED,
   decayKnockbackOffset,
   ENEMY_HIT_FLASH_DURATION,
+  ENEMY_RENDER_HALF_WIDTH,
   formatDamageNumber,
   MAX_BURST_PARTICLES,
   MAX_DAMAGE_NUMBERS,
@@ -84,6 +89,8 @@ interface OrbEntity {
   scatterVy: number;
   scatterTimer: number;
   scatterMaxTimer: number;
+  scatterOffsetX: number;
+  scatterOffsetY: number;
   hopPeak: number;
   sprite: Phaser.GameObjects.Image;
 }
@@ -520,13 +527,20 @@ export class GameScene extends Phaser.Scene {
           })),
           burstParticles: this.burstParticles.length,
           scatteringOrbs: this.orbs.filter((orb) => orb.scatterTimer > 0).length,
+          orbs: this.orbs.map((orb) => ({
+            x: Math.round(orb.x * 100) / 100,
+            y: Math.round(orb.y * 100) / 100,
+            renderX: Math.round(orb.sprite.x * 100) / 100,
+            renderY: Math.round(orb.sprite.y * 100) / 100,
+            scattering: orb.scatterTimer > 0,
+          })),
           enemies: this.enemies.map((enemy) => {
             const renderPos = computeClampedRenderPos(
               enemy.x,
               enemy.y,
               enemy.knockbackOffsetX,
               enemy.knockbackOffsetY,
-              enemy.radius,
+              enemy.kind === 'boss' ? BOSS_RENDER_HALF_WIDTH : ENEMY_RENDER_HALF_WIDTH,
             );
             return {
               id: enemy.id,
@@ -1026,18 +1040,15 @@ export class GameScene extends Phaser.Scene {
     for (let i = this.orbs.length - 1; i >= 0; i -= 1) {
       const orb = this.orbs[i];
       if (orb.scatterTimer > 0) {
-        const ratio = orb.scatterTimer / orb.scatterMaxTimer;
-        orb.x = Phaser.Math.Clamp(
-          orb.x + orb.scatterVx * ratio * dt,
-          PLAYER_RADIUS,
-          ARENA_WIDTH - PLAYER_RADIUS,
-        );
-        orb.y = Phaser.Math.Clamp(
-          orb.y + orb.scatterVy * ratio * dt,
-          HUD_HEIGHT + PLAYER_RADIUS,
-          ARENA_HEIGHT - PLAYER_RADIUS,
-        );
         orb.scatterTimer = Math.max(0, orb.scatterTimer - dt);
+        const offset = computeOrbScatterOffset(
+          orb.scatterVx,
+          orb.scatterVy,
+          orb.scatterTimer,
+          orb.scatterMaxTimer,
+        );
+        orb.scatterOffsetX = offset.x;
+        orb.scatterOffsetY = offset.y;
       }
 
       const dx = this.playerX - orb.x;
@@ -1147,6 +1158,8 @@ export class GameScene extends Phaser.Scene {
       scatterVy: scatter?.vy ?? 0,
       scatterTimer: scatter?.duration ?? 0,
       scatterMaxTimer: scatter?.duration ?? 0,
+      scatterOffsetX: 0,
+      scatterOffsetY: 0,
       hopPeak: scatter?.hopPeak ?? 0,
       sprite: orbSprite,
     });
@@ -1160,8 +1173,9 @@ export class GameScene extends Phaser.Scene {
         existing.amount += damage;
         existing.sinceLastHit = 0;
         existing.timer = existing.maxTimer;
-        existing.x = enemy.x;
-        existing.y = enemy.y - yOffset;
+        const mergedPos = computeDamageNumberPos(enemy.x, enemy.y, yOffset);
+        existing.x = mergedPos.x;
+        existing.y = mergedPos.y;
         const label = formatDamageNumber(existing.amount);
         existing.text
           .setText(label)
@@ -1188,8 +1202,7 @@ export class GameScene extends Phaser.Scene {
 
     const spread = ((this.damageNumberCounter % 3) - 1) * 6;
     this.damageNumberCounter += 1;
-    const x = Phaser.Math.Clamp(enemy.x + spread, 20, ARENA_WIDTH - 20);
-    const y = Math.max(HUD_HEIGHT + 16, enemy.y - yOffset);
+    const { x, y } = computeDamageNumberPos(enemy.x, enemy.y, yOffset, spread);
     const label = formatDamageNumber(damage);
 
     const shadowText = addPixelText(this, x + 2, y + 2, label, {
@@ -1275,7 +1288,8 @@ export class GameScene extends Phaser.Scene {
       this.spawnDeathBurst(enemy);
       if (enemy.kind === 'boss') {
         for (let k = 0; k < BOSS_XP_ORBS; k += 1) {
-          this.spawnOrbAt(enemy.x, enemy.y, computeOrbScatterVelocity(k, BOSS_XP_ORBS));
+          const spawnPos = computeBossOrbSpawnPos(enemy.x, enemy.y, k, BOSS_XP_ORBS);
+          this.spawnOrbAt(spawnPos.x, spawnPos.y, computeOrbScatterVelocity(k, BOSS_XP_ORBS));
         }
       } else {
         this.spawnOrbAt(enemy.x, enemy.y, computeOrbScatterVelocity(0, 1));
@@ -1457,13 +1471,20 @@ export class GameScene extends Phaser.Scene {
       this.lanternRingSprite.setVisible(false);
     }
 
-    // XP orbs (with hop arc during initial scatter)
+    // XP orbs (with render-only scatter offset & hop arc during initial scatter)
     for (const orb of this.orbs) {
       const hopY =
         orb.scatterTimer > 0 && orb.scatterMaxTimer > 0
           ? -Math.sin((1 - orb.scatterTimer / orb.scatterMaxTimer) * Math.PI) * orb.hopPeak
           : 0;
-      orb.sprite.setPosition(Math.round(orb.x), Math.round(orb.y + hopY));
+      const renderPos = computeClampedRenderPos(
+        orb.x,
+        orb.y,
+        orb.scatterOffsetX,
+        orb.scatterOffsetY + hopY,
+        PLAYER_RADIUS,
+      );
+      orb.sprite.setPosition(Math.round(renderPos.x), Math.round(renderPos.y));
     }
 
     // Enemies + crisp pixel HP bars (render-only knockback & hit scale pop)
@@ -1480,7 +1501,7 @@ export class GameScene extends Phaser.Scene {
         enemy.y,
         enemy.knockbackOffsetX,
         enemy.knockbackOffsetY,
-        enemy.radius,
+        enemy.kind === 'boss' ? BOSS_RENDER_HALF_WIDTH : ENEMY_RENDER_HALF_WIDTH,
       );
       const baseSize = enemy.kind === 'boss' ? 128 : 64;
       const hitScale = enemy.hitFlash > 0 ? (enemy.kind === 'boss' ? 1.06 : 1.12) : 1;

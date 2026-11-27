@@ -41,6 +41,14 @@ export interface DebugEnemyFeelInfo {
   knockbackY: number;
 }
 
+export interface DebugOrbFeelInfo {
+  x: number;
+  y: number;
+  renderX: number;
+  renderY: number;
+  scattering: boolean;
+}
+
 export interface DebugGameFeelInfo {
   playerTexture: string;
   playerSwinging: boolean;
@@ -49,6 +57,7 @@ export interface DebugGameFeelInfo {
   damageNumbers: DebugDamageNumberInfo[];
   burstParticles: number;
   scatteringOrbs: number;
+  orbs: DebugOrbFeelInfo[];
   enemies: DebugEnemyFeelInfo[];
 }
 

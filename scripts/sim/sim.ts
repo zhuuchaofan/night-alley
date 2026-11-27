@@ -11,6 +11,9 @@
  *
  * Player movement AI (kiting):
  * - Scans all active enemies; accumulates an inverse-square flee vector over enemies within 200px.
+ * - Boss-aware: the boss counts at half effective distance (twice the flee weight and
+ *   twice the trigger range), because a typical player spots the big boss and keeps
+ *   clear of it specifically instead of treating it like any other enemy.
  * - Adds gentle wall-margin avoidance within 60px of playable bounds so kiting curves along edges
  *   instead of pinning into corners.
  * - If any enemy is within 120px, prioritizes fleeing along the flee vector.
@@ -273,12 +276,16 @@ export function runSingleSim(seed: number): RunResult {
       const dx = playerX - e.x;
       const dy = playerY - e.y;
       const dist = Math.hypot(dx, dy);
-      if (dist <= 200) {
+      // Boss-aware kiting: a typical player spots the big boss and keeps clear
+      // of it specifically, so the boss counts at half effective distance
+      // (twice the flee weight and twice the trigger range of a normal enemy).
+      const effDist = e.kind === 'boss' ? dist / 2 : dist;
+      if (effDist <= 200) {
         hasEnemyWithin200 = true;
-        if (dist <= 120) {
+        if (effDist <= 120) {
           hasEnemyWithin120 = true;
         }
-        const safeDist = Math.max(dist, 8);
+        const safeDist = Math.max(effDist, 8);
         const weight = 1 / (safeDist * safeDist);
         if (dist > 0.001) {
           fleeX += (dx / dist) * weight;

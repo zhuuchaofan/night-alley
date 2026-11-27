@@ -9,6 +9,8 @@ import {
   BOSS_STATS,
   BOSS_XP_ORBS,
   enemyStatsAt,
+  ENEMY_RADIUS,
+  MAX_ENEMIES,
   spawnIntervalAt,
   xpNeededForLevel,
 } from '../../src/game/balance.ts';
@@ -27,14 +29,14 @@ describe('xpNeededForLevel', () => {
 });
 
 describe('spawnIntervalAt', () => {
-  it('starts at 1.2s, decreases over time (slope 0.005), and clamps at 0.28s', () => {
+  it('starts at 1.2s, decreases over time (slope 0.004), and clamps at 0.35s', () => {
     expect(spawnIntervalAt(0)).toBeCloseTo(1.2, 6);
-    expect(spawnIntervalAt(60)).toBeCloseTo(0.9, 6);
-    expect(spawnIntervalAt(120)).toBeCloseTo(0.6, 6);
-    expect(spawnIntervalAt(180)).toBeCloseTo(0.3, 6);
-    expect(spawnIntervalAt(184)).toBeCloseTo(0.28, 6);
-    expect(spawnIntervalAt(250)).toBe(0.28);
-    expect(spawnIntervalAt(1000)).toBe(0.28);
+    expect(spawnIntervalAt(60)).toBeCloseTo(0.96, 6);
+    expect(spawnIntervalAt(120)).toBeCloseTo(0.72, 6);
+    expect(spawnIntervalAt(180)).toBeCloseTo(0.48, 6);
+    expect(spawnIntervalAt(212.5)).toBeCloseTo(0.35, 6);
+    expect(spawnIntervalAt(250)).toBe(0.35);
+    expect(spawnIntervalAt(1000)).toBe(0.35);
     expect(spawnIntervalAt(-10)).toBeCloseTo(1.2, 6);
 
     expect(spawnIntervalAt(60)).toBeLessThan(spawnIntervalAt(0));
@@ -53,15 +55,15 @@ describe('enemyStatsAt', () => {
 
     const t60 = enemyStatsAt(60);
     expect(t60.maxHp).toBe(10);
-    expect(t60.speed).toBeCloseTo(55 * 1.2, 6);
+    expect(t60.speed).toBeCloseTo(55 * (1 + 0.4 / 3), 6);
 
     const t120 = enemyStatsAt(120);
-    expect(t120.maxHp).toBe(13);
-    expect(t120.speed).toBeCloseTo(55 * 1.4, 6);
+    expect(t120.maxHp).toBe(12);
+    expect(t120.speed).toBeCloseTo(55 * (1 + 0.8 / 3), 6);
 
     const t180 = enemyStatsAt(180);
-    expect(t180.maxHp).toBe(15);
-    expect(t180.speed).toBeCloseTo(55 * 1.6, 6);
+    expect(t180.maxHp).toBe(14);
+    expect(t180.speed).toBeCloseTo(55 * 1.4, 6);
 
     expect(t60.maxHp).toBeGreaterThan(t0.maxHp);
     expect(t120.maxHp).toBeGreaterThan(t60.maxHp);
@@ -76,10 +78,10 @@ describe('enemyStatsAt', () => {
 describe('Boss constants', () => {
   it('exposes consistent final boss constants and BOSS_STATS', () => {
     expect(BOSS_SPAWN_ELAPSED_SECONDS).toBe(150);
-    expect(BOSS_MAX_HP).toBe(260);
-    expect(BOSS_SPEED).toBe(105);
-    expect(BOSS_CONTACT_DAMAGE).toBe(6);
-    expect(BOSS_ATTACK_COOLDOWN).toBe(0.5);
+    expect(BOSS_MAX_HP).toBe(120);
+    expect(BOSS_SPEED).toBe(85);
+    expect(BOSS_CONTACT_DAMAGE).toBe(4);
+    expect(BOSS_ATTACK_COOLDOWN).toBe(1.75);
     expect(BOSS_RADIUS).toBe(24);
     expect(BOSS_XP_ORBS).toBe(20);
     expect(BOSS_STATS).toEqual({
@@ -89,5 +91,12 @@ describe('Boss constants', () => {
       attackCooldown: BOSS_ATTACK_COOLDOWN,
       radius: BOSS_RADIUS,
     });
+  });
+
+  it('boss is strictly bigger, faster and harder-hitting than a normal enemy', () => {
+    expect(MAX_ENEMIES).toBe(65);
+    expect(BOSS_RADIUS).toBeGreaterThan(ENEMY_RADIUS);
+    expect(BOSS_SPEED).toBeGreaterThan(enemyStatsAt(180).speed);
+    expect(BOSS_CONTACT_DAMAGE).toBeGreaterThan(enemyStatsAt(180).contactDamage);
   });
 });

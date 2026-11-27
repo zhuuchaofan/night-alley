@@ -29,6 +29,7 @@ import {
 } from '../game/joystick.ts';
 import { addPixelText, wrapPixelText } from '../game/pixelFont.ts';
 import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
+import { computeSlashPlacement } from '../game/slash.ts';
 
 type EnemyKind = 'paper' | 'lantern';
 
@@ -67,6 +68,7 @@ interface SlashEffect {
   y: number;
   angle: number;
   range: number;
+  arcDeg: number;
   timer: number;
   maxTimer: number;
   sprite: Phaser.GameObjects.Image;
@@ -338,6 +340,13 @@ export class GameScene extends Phaser.Scene {
         playerY: Math.round(this.playerY * 100) / 100,
         isLevelUpOpen: this.isLevelUpOpen,
         levelUpChoices: this.activeChoices.map((c) => ({ ...c })),
+        slashes: this.slashes.map((slash) => ({
+          x: Math.round(slash.sprite.x * 100) / 100,
+          y: Math.round(slash.sprite.y * 100) / 100,
+          rotation: Math.round(slash.sprite.rotation * 10000) / 10000,
+          displayWidth: Math.round(slash.sprite.displayWidth * 100) / 100,
+          displayHeight: Math.round(slash.sprite.displayHeight * 100) / 100,
+        })),
         settlement: null,
       }),
       addXp: (n: number) => {
@@ -591,12 +600,17 @@ export class GameScene extends Phaser.Scene {
             }
           }
 
-          const slashX = this.playerX + Math.cos(angle) * (sword.range * 0.48);
-          const slashY = this.playerY + Math.sin(angle) * (sword.range * 0.48);
+          const placement = computeSlashPlacement(
+            this.playerX,
+            this.playerY,
+            angle,
+            sword.range,
+            sword.arcDeg,
+          );
           const slashSprite = this.add
-            .image(slashX, slashY, 'slash_arc')
-            .setRotation(angle)
-            .setDisplaySize(sword.range * 1.05, sword.range * 1.4)
+            .image(placement.x, placement.y, 'slash_arc')
+            .setRotation(placement.rotation)
+            .setDisplaySize(placement.displayWidth, placement.displayHeight)
             .setDepth(11);
 
           this.slashes.push({
@@ -604,6 +618,7 @@ export class GameScene extends Phaser.Scene {
             y: this.playerY,
             angle,
             range: sword.range,
+            arcDeg: sword.arcDeg,
             timer: 0.18,
             maxTimer: 0.18,
             sprite: slashSprite,
@@ -746,10 +761,15 @@ export class GameScene extends Phaser.Scene {
         slash.sprite.destroy();
         this.slashes.splice(i, 1);
       } else {
-        slash.sprite.setPosition(
-          this.playerX + Math.cos(slash.angle) * (slash.range * 0.48),
-          this.playerY + Math.sin(slash.angle) * (slash.range * 0.48),
+        const placement = computeSlashPlacement(
+          slash.x,
+          slash.y,
+          slash.angle,
+          slash.range,
+          slash.arcDeg,
         );
+        slash.sprite.setPosition(placement.x, placement.y);
+        slash.sprite.setRotation(placement.rotation);
       }
     }
   }

@@ -15,6 +15,14 @@ export interface DebugChoiceInfo {
   y: number;
 }
 
+export interface DebugSlashInfo {
+  x: number;
+  y: number;
+  rotation: number;
+  displayWidth: number;
+  displayHeight: number;
+}
+
 export interface DebugState {
   scene: 'TitleScene' | 'GameScene' | 'GameOverScene';
   hp: number;
@@ -30,6 +38,7 @@ export interface DebugState {
   playerY: number;
   isLevelUpOpen: boolean;
   levelUpChoices: DebugChoiceInfo[];
+  slashes?: DebugSlashInfo[];
   settlement: SettlementData | null;
 }
 

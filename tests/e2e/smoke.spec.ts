@@ -196,4 +196,82 @@ test.describe('Night Alley pixel visuals & controls', () => {
     const after = await getDebugState(page);
     expect(after.playerX).toBeGreaterThan(before.playerX + 40);
   });
+
+  test('7. peach sword slash arc stays pinned at swing-time position while player moves', async ({
+    page,
+  }) => {
+    await startGame(page);
+
+    await page.keyboard.down('KeyD');
+    try {
+      const result = await page.evaluate(
+        () =>
+          new Promise<{
+            first: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            };
+            later: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            };
+          }>((resolve, reject) => {
+            const dbg = window.__NIGHT_ALLEY_DEBUG__;
+            if (!dbg) {
+              reject(new Error('Missing __NIGHT_ALLEY_DEBUG__'));
+              return;
+            }
+            dbg.spawnEnemyNearPlayer();
+
+            const startedAt = performance.now();
+            let first: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            } | null = null;
+            let later: {
+              playerX: number;
+              slash: NonNullable<DebugState['slashes']>[number];
+            } | null = null;
+
+            const step = (): void => {
+              const state = dbg.getState();
+              const activeSlash = state.slashes?.[0];
+
+              if (!first) {
+                if (activeSlash) {
+                  first = { playerX: state.playerX, slash: { ...activeSlash } };
+                  later = { playerX: state.playerX, slash: { ...activeSlash } };
+                }
+              } else if (activeSlash) {
+                later = { playerX: state.playerX, slash: { ...activeSlash } };
+                if (state.playerX - first.playerX >= 8) {
+                  resolve({ first, later });
+                  return;
+                }
+              } else {
+                resolve({ first, later: later ?? first });
+                return;
+              }
+
+              if (performance.now() - startedAt > 2000) {
+                reject(new Error('Timed out waiting for slash arc observation'));
+                return;
+              }
+              requestAnimationFrame(step);
+            };
+
+            requestAnimationFrame(step);
+          }),
+      );
+
+      expect(result.later.playerX - result.first.playerX).toBeGreaterThanOrEqual(5);
+      expect(result.later.slash.x).toBe(result.first.slash.x);
+      expect(result.later.slash.y).toBe(result.first.slash.y);
+      expect(result.later.slash.rotation).toBe(result.first.slash.rotation);
+      expect(result.first.slash.displayWidth).toBeGreaterThan(150);
+      expect(result.first.slash.displayHeight).toBeGreaterThan(150);
+    } finally {
+      await page.keyboard.up('KeyD');
+    }
+  });
 });

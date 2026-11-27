@@ -225,22 +225,22 @@ function remapPalette(overrides: Partial<Record<number, string>>): string[] {
   return PIXEL_PALETTE.map((hex, idx) => overrides[idx] ?? hex);
 }
 
-const EVOLVED_SLASH_PALETTE = remapPalette({
-  4: '#B03A2E',
-  5: '#E84A3C',
-  6: '#FF9E8A',
+export const EVOLVED_SLASH_PALETTE = remapPalette({
+  4: PALETTE.vermilion, // #B03A2E
+  5: PALETTE.vermilion, // #B03A2E
+  6: PALETTE.oldPaper, // #D9A066
 });
 
-const EVOLVED_DART_PALETTE = remapPalette({
-  3: '#6B3FA0',
-  4: '#B57BFF',
-  5: '#F5E6FF',
+export const EVOLVED_DART_PALETTE = remapPalette({
+  3: PALETTE.nightBlue, // #2E4A73
+  4: PALETTE.fogBlue, // #4E739E
+  5: PALETTE.silverBlue, // #8FA8C8
 });
 
-const EVOLVED_LANTERN_PALETTE = remapPalette({
-  5: '#5CE6B8',
-  6: '#C4FFEB',
-  13: '#2E9E7A',
+export const EVOLVED_LANTERN_PALETTE = remapPalette({
+  5: PALETTE.candleLight, // #F2E3C6
+  6: PALETTE.paperWhite, // #FBF6E9
+  13: PALETTE.jadeGreen, // #4E7A5A
 });
 
 /**

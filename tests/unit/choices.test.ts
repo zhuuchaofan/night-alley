@@ -226,4 +226,27 @@ describe('weapon evolution', () => {
       expect(displayWeaponName(evolvedWeapon)).toBe(EVOLUTION_DEFS[id].name);
     }
   });
+
+  it('ignores evolution choice when weapon is below level 5', () => {
+    const stats = createInitialPlayerStats();
+    stats.weapons.peach_sword!.level = 4;
+
+    const updated = applyChoice(stats, {
+      id: 'evo:peach_sword',
+      category: 'evolution',
+      title: EVOLUTION_DEFS.peach_sword.name,
+      description: '',
+      weaponId: 'peach_sword',
+    });
+
+    expect(updated.weapons.peach_sword?.evolved).toBe(false);
+    expect(updated.weapons.peach_sword?.level).toBe(4);
+    expect(updated.weapons.peach_sword?.damage).toBe(6);
+    expect(updated.weapons.peach_sword?.arcDeg).toBe(100);
+    expect(stats.weapons.peach_sword?.evolved).toBe(false);
+    expect(stats.weapons.peach_sword?.level).toBe(4);
+    expect(stats.weapons.peach_sword?.damage).toBe(6);
+    expect(updated).not.toBe(stats);
+    expect(updated.weapons.peach_sword).not.toBe(stats.weapons.peach_sword);
+  });
 });

@@ -212,7 +212,7 @@ export function applyChoice(stats: PlayerStats, choice: ChoiceOption): PlayerSta
 
   if (choice.category === 'evolution' && choice.weaponId) {
     const weapon = next.weapons[choice.weaponId];
-    if (!weapon || weapon.evolved) {
+    if (!weapon || weapon.evolved || weapon.level < EVOLUTION_MIN_LEVEL) {
       return next;
     }
     const evo = EVOLUTION_DEFS[choice.weaponId];

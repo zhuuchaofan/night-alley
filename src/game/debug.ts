@@ -73,6 +73,8 @@ export interface DebugGameFeelInfo {
   playerSwinging: boolean;
   playerSwingAngle: number;
   playerScreenFlash: number;
+  /** Joystick overlay alpha (0 = hidden, 1 = fully shown). */
+  joystickAlpha: number;
   damageNumbers: DebugDamageNumberInfo[];
   burstParticles: number;
   scatteringOrbs: number;

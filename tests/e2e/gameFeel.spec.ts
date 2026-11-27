@@ -577,8 +577,11 @@ test.describe('Night Alley game feel (stage 2)', () => {
         const afterFull = await getDebugState(page);
         expect(afterFull.playerX).toBeGreaterThan(afterPartial.playerX + 20);
 
-        // Second finger tries to steer up/left while finger 11 holds right
-        const secondTouch = { x: originX + 140, y: originY, id: 12 };
+        // Second finger tries to steer up/left while finger 11 holds right.
+        // It starts on the LEFT half at both scales (originX + 100 < half
+        // width at 390px: 86 + 100 = 186 < 195) so the case exercises
+        // single-pointer ownership, not just the right-half rejection.
+        const secondTouch = { x: originX + 100, y: originY, id: 12 };
         await cdp.send('Input.dispatchTouchEvent', {
           type: 'touchStart',
           touchPoints: [{ x: originX + 75, y: originY, id: 11 }, secondTouch],
@@ -609,6 +612,8 @@ test.describe('Night Alley game feel (stage 2)', () => {
         const afterRelease = await getDebugState(page);
         expect(Math.abs(afterRelease.playerX - atRelease.playerX)).toBeLessThan(1);
         expect(Math.abs(afterRelease.playerY - atRelease.playerY)).toBeLessThan(1);
+        // Overlay fades out at 6/s, so after 260ms it must be fully gone.
+        expect(afterRelease.gameFeel?.joystickAlpha).toBe(0);
       } finally {
         await context.close();
       }

@@ -591,6 +591,7 @@ export class GameScene extends Phaser.Scene {
             playerSwinging: this.playerSwingTimer > 0,
             playerSwingAngle: Math.round(this.playerSwingAngle * 10000) / 10000,
             playerScreenFlash: Math.round(this.playerScreenFlash * 1000) / 1000,
+            joystickAlpha: Math.round(this.joystickAlpha * 1000) / 1000,
             damageNumbers: this.damageNumbers.map((dn) => ({
               text: dn.text.text,
               x: Math.round(dn.x * 100) / 100,

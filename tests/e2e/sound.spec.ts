@@ -49,6 +49,10 @@ test.describe('Night Alley sound controls and unlock (stage 5)', () => {
     await page.waitForFunction(
       () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
     );
+    // Resume can finish after the scene starts; wait for the unlock itself.
+    await page.waitForFunction(
+      () => window.__NIGHT_ALLEY_DEBUG__?.getState().soundUnlocked === true,
+    );
     await expect(toggle).toBeHidden();
     const inGame = await getDebugState(page);
     expect(inGame.soundMuted).toBe(true);
@@ -98,6 +102,9 @@ test.describe('Night Alley sound controls and unlock (stage 5)', () => {
     await page.waitForFunction(
       () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
     );
+    await page.waitForFunction(
+      () => window.__NIGHT_ALLEY_DEBUG__?.getState().soundUnlocked === true,
+    );
     const afterSpace = await getDebugState(page);
     expect(afterSpace.soundUnlocked).toBe(true);
     expect(afterSpace.soundMuted).toBe(true);
@@ -108,6 +115,9 @@ test.describe('Night Alley sound controls and unlock (stage 5)', () => {
     await page.keyboard.press('Enter');
     await page.waitForFunction(
       () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
+    );
+    await page.waitForFunction(
+      () => window.__NIGHT_ALLEY_DEBUG__?.getState().soundUnlocked === true,
     );
     const afterEnter = await getDebugState(page);
     expect(afterEnter.soundUnlocked).toBe(true);
@@ -170,6 +180,9 @@ test.describe('Night Alley sound controls and unlock (stage 5)', () => {
       });
       await page.waitForFunction(
         () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
+      );
+      await page.waitForFunction(
+        () => window.__NIGHT_ALLEY_DEBUG__?.getState().soundUnlocked === true,
       );
       const started = await getDebugState(page);
       expect(started.soundUnlocked).toBe(true);

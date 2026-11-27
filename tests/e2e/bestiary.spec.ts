@@ -181,6 +181,27 @@ test.describe('Night Alley bestiary (stage 5)', () => {
       await page.waitForFunction(
         () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'BestiaryScene',
       );
+
+      // Third GameOver button: return to Title, start a run, die, and click
+      // '再来一局' (280, 405) — the button that moved in this PR.
+      await clickLogical(page, 480, 476);
+      await page.waitForFunction(
+        () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'TitleScene',
+      );
+      await clickLogical(page, 480, 320);
+      await page.waitForFunction(
+        () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
+      );
+      await page.evaluate(() => {
+        window.__NIGHT_ALLEY_DEBUG__?.setHp(0);
+      });
+      await page.waitForFunction(
+        () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameOverScene',
+      );
+      await clickLogical(page, 280, 405);
+      await page.waitForFunction(
+        () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
+      );
     } finally {
       await context.close();
     }

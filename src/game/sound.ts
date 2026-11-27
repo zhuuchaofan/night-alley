@@ -36,6 +36,10 @@ function getOrCreateNoiseBuffer(audioCtx: AudioContext): AudioBuffer {
   if (noiseBuffer && noiseBuffer.sampleRate === audioCtx.sampleRate) {
     return noiseBuffer;
   }
+  // Noise draws come straight from Math.random(). Live gameplay randomness
+  // is unseeded (spawns and upgrade choices also use Math.random()), so the
+  // shifted sequence changes nothing deterministic; the sim uses its own
+  // seeded RNG and never imports this module.
   const length = Math.ceil(audioCtx.sampleRate * NOISE_BUFFER_SECONDS);
   const buffer = audioCtx.createBuffer(1, length, audioCtx.sampleRate);
   const channel = buffer.getChannelData(0);

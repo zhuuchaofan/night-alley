@@ -235,6 +235,9 @@ export class BestiaryScene extends Phaser.Scene {
     kb?.on('keydown-ESC', goBack);
     const cleanupKey = (): void => {
       kb?.off('keydown-ESC', goBack);
+      // See TitleScene: without this the DESTROY listener (and this visit's
+      // closure) survives every shutdown, one per visit.
+      this.events.off(Phaser.Scenes.Events.DESTROY, cleanupKey);
     };
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanupKey);
     this.events.once(Phaser.Scenes.Events.DESTROY, cleanupKey);

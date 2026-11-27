@@ -201,6 +201,10 @@ export class TitleScene extends Phaser.Scene {
         return;
       }
       cleanedUp = true;
+      // Unregister the pending DESTROY listener too: the scene is stopped,
+      // not destroyed, on a normal Title exit, so without this the listener
+      // (and this visit's closure) would pile up one per visit.
+      this.events.off(Phaser.Scenes.Events.DESTROY, cleanupTitle);
       if (soundToggle) {
         soundToggle.removeEventListener('click', onToggleClick);
         if (document.activeElement === soundToggle) {

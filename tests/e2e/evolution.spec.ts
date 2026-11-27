@@ -1,7 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { expect, Page, test } from '@playwright/test';
 import { xpNeededForLevel } from '../../src/game/balance.ts';
 import type { DebugChoiceInfo, DebugState } from '../../src/game/debug.ts';
 import { clickLogical, getDebugState, startGame } from './helpers.ts';
+
+const POLISH_SCREENSHOT_DIR = path.resolve(process.cwd(), '../polish-stage3-screenshots');
 
 async function triggerNextLevelUp(page: Page): Promise<DebugState> {
   await page.evaluate(() => {
@@ -22,6 +26,8 @@ async function triggerNextLevelUp(page: Page): Promise<DebugState> {
 }
 
 async function pickChoice(page: Page, choice: DebugChoiceInfo): Promise<void> {
+  // The modal ignores clicks for the first 400ms (mis-tap guard).
+  await page.waitForTimeout(500);
   await clickLogical(page, choice.x, choice.y);
   await page.waitForFunction(
     () => window.__NIGHT_ALLEY_DEBUG__?.getState().isLevelUpOpen === false,
@@ -59,6 +65,12 @@ test.describe('Night Alley weapon evolution', () => {
         if (evoChoice) {
           await pickChoice(page, evoChoice);
           evolved = true;
+          // The evolution banner shows for 2.5s after the pick; capture it
+          // while it is still up.
+          fs.mkdirSync(POLISH_SCREENSHOT_DIR, { recursive: true });
+          await page.screenshot({
+            path: path.join(POLISH_SCREENSHOT_DIR, 'evolution-banner.png'),
+          });
           break;
         }
 
@@ -88,6 +100,27 @@ test.describe('Night Alley weapon evolution', () => {
       const afterEvo = await getDebugState(page);
       expect(afterEvo.evolvedWeapons).toContain('peach_sword');
       expect(afterEvo.loadoutText).toContain('破魔法剑');
+    });
+
+    await test.step('evolved sword upgrade cards show the evolved name, not 桃木剑', async () => {
+      // After evolution the sword's two upgrade cards must read
+      // 破魔法剑 · 锐利 / 破魔法剑 · 候锋 (or whichever suffixes appear).
+      let sawEvolvedUpgrade = false;
+      for (let i = 0; i < POST_EVO_LEVEL_UPS; i += 1) {
+        const modalState = await triggerNextLevelUp(page);
+        const swordUpgrade = modalState.levelUpChoices.find((c) =>
+          c.id.startsWith('upg:peach_sword:'),
+        );
+        if (swordUpgrade) {
+          expect(swordUpgrade.title.startsWith('破魔法剑 · ')).toBe(true);
+          expect(swordUpgrade.title).not.toContain('桃木剑');
+          sawEvolvedUpgrade = true;
+          await pickChoice(page, swordUpgrade);
+          break;
+        }
+        await pickChoice(page, modalState.levelUpChoices[0]);
+      }
+      expect(sawEvolvedUpgrade).toBe(true);
     });
 
     await test.step('evo:peach_sword does not appear in subsequent level-ups', async () => {

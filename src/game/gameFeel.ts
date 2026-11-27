@@ -1,4 +1,5 @@
 import { ARENA_HEIGHT, ARENA_WIDTH, HUD_HEIGHT, PLAYER_RADIUS } from './balance.ts';
+import type { EnemyKind } from './balance.ts';
 
 export const ENEMY_HIT_FLASH_DURATION = 0.12;
 export const PLAYER_HIT_FLASH_DURATION = 0.14;
@@ -28,6 +29,63 @@ export const DAMAGE_NUMBER_MARGIN_X = 20;
 export const DAMAGE_NUMBER_HUD_PADDING = 16;
 
 export const MAX_BURST_PARTICLES = 120;
+
+/** Boss-death cinematic: the world runs at this speed while the boss shatters. */
+export const BOSS_DEATH_SLOW_MO_SCALE = 0.25;
+/** Real seconds the boss-death cinematic lasts before the win settles. */
+export const BOSS_DEATH_CINEMATIC_SECONDS = 1.4;
+
+export interface DeathBurstSpec {
+  /** Particle count. */
+  count: number;
+  /** Particle pixel size. */
+  size: number;
+  speedMin: number;
+  speedMax: number;
+  lifetimeMin: number;
+  lifetimeMax: number;
+  /** Max tumble speed (rad/s); fragments spin as they fly, so the burst reads as shattering. */
+  spinMax: number;
+}
+
+/**
+ * Death-burst tuning per enemy kind. Normal enemies get a small shatter;
+ * the boss gets a bigger, chunkier, longer-lived shatter that fills the
+ * slow-motion cinematic.
+ */
+export function deathBurstSpec(kind: EnemyKind): DeathBurstSpec {
+  if (kind === 'boss') {
+    return {
+      count: 18,
+      size: 7,
+      speedMin: 110,
+      speedMax: 220,
+      lifetimeMin: 0.45,
+      lifetimeMax: 0.65,
+      spinMax: 14,
+    };
+  }
+  if (kind === 'elite') {
+    return {
+      count: 12,
+      size: 5,
+      speedMin: 90,
+      speedMax: 170,
+      lifetimeMin: 0.3,
+      lifetimeMax: 0.45,
+      spinMax: 12,
+    };
+  }
+  return {
+    count: 7,
+    size: 4,
+    speedMin: 75,
+    speedMax: 160,
+    lifetimeMin: 0.26,
+    lifetimeMax: 0.38,
+    spinMax: 10,
+  };
+}
 export const ORB_SCATTER_VISUAL_SCALE = 0.4;
 
 export interface SwingPose {

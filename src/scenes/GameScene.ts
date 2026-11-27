@@ -4,13 +4,13 @@ import {
   ARENA_WIDTH,
   BOSS_SPAWN_ELAPSED_SECONDS,
   BOSS_STATS,
-  BOSS_XP_ORBS,
   createInitialPlayerStats,
   displayWeaponName,
   ELITE_XP_ORBS,
   ENEMY_RADIUS,
   type EnemyKind,
   enemyStatsForKind,
+  EVOLUTION_DEFS,
   formatTime,
   HUD_HEIGHT,
   MAX_ENEMIES,
@@ -44,9 +44,10 @@ import {
 import { addPixelText, wrapPixelText } from '../game/pixelFont.ts';
 import {
   applyKnockbackImpulse,
+  BOSS_DEATH_CINEMATIC_SECONDS,
+  BOSS_DEATH_SLOW_MO_SCALE,
   BOSS_RENDER_HALF_WIDTH,
   canMergeDamageNumber,
-  computeBossOrbSpawnPos,
   computeClampedRenderPos,
   computeDamageNumberAlpha,
   computeDamageNumberPos,
@@ -55,6 +56,7 @@ import {
   computeSwingPose,
   DAMAGE_NUMBER_DURATION,
   DAMAGE_NUMBER_RISE_SPEED,
+  deathBurstSpec,
   decayKnockbackOffset,
   ENEMY_HIT_FLASH_DURATION,
   ENEMY_RENDER_HALF_WIDTH,
@@ -137,6 +139,10 @@ interface BurstParticle {
   color: number;
   timer: number;
   maxTimer: number;
+  /** Current tumble angle (rad); fragments spin as they fly. */
+  rot: number;
+  /** Tumble speed (rad/s). */
+  spin: number;
 }
 
 interface DartEntity {
@@ -238,12 +244,20 @@ export class GameScene extends Phaser.Scene {
   private windowMouseMoveHandler: ((event: MouseEvent) => void) | null = null;
 
   private isLevelUpOpen = false;
+  private levelUpInputLocked = false;
   private activeChoices: DebugChoiceInfo[] = [];
   private levelUpModal: Phaser.GameObjects.Container | null = null;
 
   private bossSpawned = false;
+  /** Boss-death cinematic in progress: world runs in slow motion, win settles after it. */
+  private bossDying = false;
+  private bossDeathTimer = 0;
+  /** Settlement counters frozen at the lethal boss hit (see debug.ts). */
+  private bossKillKills: number | null = null;
+  private bossKillMaxConcurrent: number | null = null;
   private bossBanner: Phaser.GameObjects.Container | null = null;
   private bossBannerTimer = 0;
+  private bannerKind: 'boss' | 'evolution' | null = null;
 
   private keys: MovementKeys | null = null;
   private worldGfx!: Phaser.GameObjects.Graphics;
@@ -344,8 +358,13 @@ export class GameScene extends Phaser.Scene {
     this.levelUpModal = null;
 
     this.bossSpawned = false;
+    this.bossDying = false;
+    this.bossDeathTimer = 0;
+    this.bossKillKills = null;
+    this.bossKillMaxConcurrent = null;
     this.bossBanner = null;
     this.bossBannerTimer = 0;
+    this.bannerKind = null;
   }
 
   private createHud(): void {
@@ -547,6 +566,9 @@ export class GameScene extends Phaser.Scene {
           levelUpChoices: this.activeChoices.map((c) => ({ ...c })),
           bossSpawned: this.bossSpawned,
           bossAlive: this.enemies.some((enemy) => enemy.kind === 'boss'),
+          bossDying: this.bossDying,
+          bossKillKills: this.bossKillKills,
+          bossKillMaxConcurrent: this.bossKillMaxConcurrent,
           slashes: this.slashes.map((slash) => ({
             x: Math.round(slash.sprite.x * 100) / 100,
             y: Math.round(slash.sprite.y * 100) / 100,
@@ -611,7 +633,7 @@ export class GameScene extends Phaser.Scene {
         }
       },
       setTimeLeft: (s: number) => {
-        if (this.ended) {
+        if (this.ended || this.bossDying) {
           return;
         }
         this.timeLeft = Math.max(0, s);
@@ -625,7 +647,7 @@ export class GameScene extends Phaser.Scene {
         this.renderWorld();
       },
       setHp: (n: number) => {
-        if (this.ended) {
+        if (this.ended || this.bossDying) {
           return;
         }
         this.stats.hp = Math.max(0, Math.min(this.stats.maxHp, n));
@@ -664,14 +686,27 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const dt = Math.min(delta / 1000, 0.25);
+    const rawDt = Math.min(delta / 1000, 0.25);
+    // Boss-death cinematic: the world crawls in slow motion while the
+    // boss shatters; the win settles on real time, not game time.
+    const dt = this.bossDying ? rawDt * BOSS_DEATH_SLOW_MO_SCALE : rawDt;
+    if (this.bossDying) {
+      this.bossDeathTimer += rawDt;
+      if (this.bossDeathTimer >= BOSS_DEATH_CINEMATIC_SECONDS) {
+        this.finishRun(true, 'boss');
+        return;
+      }
+    }
 
     if (!this.isLevelUpOpen) {
-      this.elapsedSeconds += dt;
-      this.timeLeft = Math.max(0, this.timeLeft - dt);
-      if (this.timeLeft <= 0) {
-        this.finishRun(true);
-        return;
+      // The round timer freezes during the cinematic: the run is already won.
+      if (!this.bossDying) {
+        this.elapsedSeconds += dt;
+        this.timeLeft = Math.max(0, this.timeLeft - dt);
+        if (this.timeLeft <= 0) {
+          this.finishRun(true);
+          return;
+        }
       }
 
       this.updatePlayerMovement(dt);
@@ -685,7 +720,15 @@ export class GameScene extends Phaser.Scene {
         return;
       }
       this.updateWeapons(dt);
+      if (this.ended) {
+        // Boss kill ends the run from inside updateWeapons.
+        return;
+      }
       this.updateDarts(dt);
+      if (this.ended) {
+        // Boss kill ends the run from inside updateDarts.
+        return;
+      }
       this.updateOrbs(dt);
       this.updateEffects(dt);
       if (this.isDragging) {
@@ -810,17 +853,28 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showBossBanner(): void {
+    this.showBanner('大心魔现身', 'boss');
+  }
+
+  /** One shared center banner slot (boss spawn, evolution pick, ...). */
+  private showBanner(text: string, kind: 'boss' | 'evolution'): void {
+    // The boss warning is gameplay-critical: an evolution pick while it
+    // is showing must not cut it short. (A boss spawn may overwrite an
+    // evolution notice — that direction is fine.)
+    if (kind === 'evolution' && this.bannerKind === 'boss') {
+      return;
+    }
     this.clearBossBanner();
     const banner = this.add.container(0, 0).setDepth(26);
     banner.add(
-      addPixelText(this, ARENA_WIDTH / 2 + 2, 80 + 2, '大心魔现身', {
+      addPixelText(this, ARENA_WIDTH / 2 + 2, 80 + 2, text, {
         size: 48,
         color: PALETTE.inkBlack,
         origin: 0.5,
       }),
     );
     banner.add(
-      addPixelText(this, ARENA_WIDTH / 2, 80, '大心魔现身', {
+      addPixelText(this, ARENA_WIDTH / 2, 80, text, {
         size: 48,
         color: PALETTE.lanternYellow,
         origin: 0.5,
@@ -828,12 +882,14 @@ export class GameScene extends Phaser.Scene {
     );
     this.bossBanner = banner;
     this.bossBannerTimer = 2.5;
+    this.bannerKind = kind;
   }
 
   private clearBossBanner(): void {
     this.bossBanner?.destroy(true);
     this.bossBanner = null;
     this.bossBannerTimer = 0;
+    this.bannerKind = null;
   }
 
   /** Normal (non-boss) enemies on the field; the boss never consumes a normal spawn slot. */
@@ -848,6 +904,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateSpawning(dt: number): void {
+    // No spawns during the boss-death cinematic: the run is already won,
+    // and a spawn would raise maxConcurrent after the settlement counters
+    // froze at the lethal hit.
+    if (this.bossDying) {
+      return;
+    }
     this.checkBossSpawn();
 
     this.spawnTimer -= dt;
@@ -983,19 +1045,22 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    for (const enemy of this.enemies) {
-      const touchDist = PLAYER_RADIUS + enemy.radius;
-      const dist = Math.hypot(this.playerX - enemy.x, this.playerY - enemy.y);
-      if (dist <= touchDist && enemy.attackCooldownRemaining <= 0) {
-        this.stats.hp = Math.max(0, this.stats.hp - enemy.contactDamage);
-        enemy.attackCooldownRemaining = enemy.attackCooldown;
-        this.playerHitFlash = PLAYER_HIT_FLASH_DURATION;
-        this.playerScreenFlash = PLAYER_SCREEN_FLASH_DURATION;
-        if (this.stats.hp <= 0) {
-          this.finishRun(false);
-          return;
+    // No contact damage during the boss-death cinematic: the run is already won.
+    if (!this.bossDying) {
+      for (const enemy of this.enemies) {
+        const touchDist = PLAYER_RADIUS + enemy.radius;
+        const dist = Math.hypot(this.playerX - enemy.x, this.playerY - enemy.y);
+        if (dist <= touchDist && enemy.attackCooldownRemaining <= 0) {
+          this.stats.hp = Math.max(0, this.stats.hp - enemy.contactDamage);
+          enemy.attackCooldownRemaining = enemy.attackCooldown;
+          this.playerHitFlash = PLAYER_HIT_FLASH_DURATION;
+          this.playerScreenFlash = PLAYER_SCREEN_FLASH_DURATION;
+          if (this.stats.hp <= 0) {
+            this.finishRun(false);
+            return;
+          }
+          this.cameras.main.shake(PLAYER_SHAKE_DURATION_MS, PLAYER_SHAKE_INTENSITY);
         }
-        this.cameras.main.shake(PLAYER_SHAKE_DURATION_MS, PLAYER_SHAKE_INTENSITY);
       }
     }
   }
@@ -1017,7 +1082,12 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
-      if (Math.hypot(this.playerX - bolt.x, this.playerY - bolt.y) <= bolt.radius + PLAYER_RADIUS) {
+      // Bolts still fly during the boss-death cinematic, but they cannot
+      // kill a run that is already won.
+      if (
+        !this.bossDying &&
+        Math.hypot(this.playerX - bolt.x, this.playerY - bolt.y) <= bolt.radius + PLAYER_RADIUS
+      ) {
         this.stats.hp = Math.max(0, this.stats.hp - bolt.damage);
         this.playerHitFlash = PLAYER_HIT_FLASH_DURATION;
         this.playerScreenFlash = PLAYER_SCREEN_FLASH_DURATION;
@@ -1050,7 +1120,7 @@ export class GameScene extends Phaser.Scene {
             if (Math.hypot(dx, dy) <= sword.range + enemy.radius) {
               const enemyAngle = Math.atan2(dy, dx);
               if (normalizeAngleDiff(enemyAngle, angle) <= halfArcRad) {
-                this.damageEnemyAt(i, dmg, this.playerX, this.playerY);
+                this.damageEnemyAt(i, dmg, this.playerX, this.playerY, sword.evolved);
               }
             }
           }
@@ -1138,7 +1208,7 @@ export class GameScene extends Phaser.Scene {
           for (let i = this.enemies.length - 1; i >= 0; i -= 1) {
             const enemy = this.enemies[i];
             if (Math.hypot(enemy.x - this.playerX, enemy.y - this.playerY) <= lantern.range + enemy.radius) {
-              this.damageEnemyAt(i, dmg, this.playerX, this.playerY);
+              this.damageEnemyAt(i, dmg, this.playerX, this.playerY, lantern.evolved);
             }
           }
         }
@@ -1177,7 +1247,7 @@ export class GameScene extends Phaser.Scene {
       for (let j = this.enemies.length - 1; j >= 0; j -= 1) {
         const enemy = this.enemies[j];
         if (Math.hypot(enemy.x - dart.x, enemy.y - dart.y) <= dart.radius + enemy.radius) {
-          this.damageEnemyAt(j, dart.damage, dart.x - dart.vx * 0.05, dart.y - dart.vy * 0.05);
+          this.damageEnemyAt(j, dart.damage, dart.x - dart.vx * 0.05, dart.y - dart.vy * 0.05, this.stats.weapons.coin_dart?.evolved ?? false);
           dart.sprite.destroy();
           this.darts.splice(i, 1);
           break;
@@ -1288,6 +1358,8 @@ export class GameScene extends Phaser.Scene {
       p.y += p.vy * dt;
       p.vx *= drag;
       p.vy *= drag;
+      // Fragments tumble as they fly, so the burst reads as shattering.
+      p.rot += p.spin * dt;
     }
   }
 
@@ -1323,7 +1395,12 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private spawnDamageNumber(enemy: EnemyEntity, damage: number, isKill: boolean): void {
+  private spawnDamageNumber(
+    enemy: EnemyEntity,
+    damage: number,
+    isKill: boolean,
+    evolvedHit = false,
+  ): void {
     const yOffset = enemy.kind === 'boss' ? 42 : enemy.kind === 'elite' ? 32 : 24;
     for (let i = this.damageNumbers.length - 1; i >= 0; i -= 1) {
       const existing = this.damageNumbers[i];
@@ -1343,8 +1420,14 @@ export class GameScene extends Phaser.Scene {
           .setText(label)
           .setPosition(Math.round(existing.x) + 2, Math.round(existing.y) + 2)
           .setAlpha(1);
-        if (isKill) {
+        if (isKill || evolvedHit) {
           existing.text.setTint(0xe8b34b);
+        }
+        if (evolvedHit) {
+          // An evolved hit merging into a 24px number must grow it, or the
+          // bigger-number signal only appears on fresh numbers.
+          existing.text.setFontSize(48);
+          existing.shadowText.setFontSize(48);
         }
         return;
       }
@@ -1362,15 +1445,19 @@ export class GameScene extends Phaser.Scene {
     this.damageNumberCounter += 1;
     const { x, y } = computeDamageNumberPos(enemy.x, enemy.y, yOffset, spread);
     const label = formatDamageNumber(damage);
+    // Evolved-weapon hits read bigger and gold, so the ×2 damage is
+    // visible instead of just wider slash arcs. 48 is the next crisp
+    // pixel-font size up from 24 (the font only renders 12/24/48).
+    const numberSize = evolvedHit ? 48 : 24;
 
     const shadowText = addPixelText(this, x + 2, y + 2, label, {
-      size: 24,
+      size: numberSize,
       color: PALETTE.inkBlack,
       origin: 0.5,
     }).setDepth(15);
     const text = addPixelText(this, x, y, label, {
-      size: 24,
-      color: isKill ? PALETTE.lanternYellow : PALETTE.paperWhite,
+      size: numberSize,
+      color: isKill || evolvedHit ? PALETTE.lanternYellow : PALETTE.paperWhite,
       origin: 0.5,
     }).setDepth(16);
 
@@ -1389,7 +1476,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnDeathBurst(enemy: EnemyEntity): void {
-    const count = enemy.kind === 'boss' ? 18 : enemy.kind === 'elite' ? 12 : 7;
+    const spec = deathBurstSpec(enemy.kind);
     const colorsByKind: Record<EnemyKind, number[]> = {
       boss: [0xb03a2e, 0xe8b34b, 0xfbf6e9],
       elite: [0xb03a2e, 0xe8b34b, 0x4e7a5a],
@@ -1400,22 +1487,24 @@ export class GameScene extends Phaser.Scene {
     };
     const colors = colorsByKind[enemy.kind];
 
-    for (let k = 0; k < count; k += 1) {
+    for (let k = 0; k < spec.count; k += 1) {
       if (this.burstParticles.length >= MAX_BURST_PARTICLES) {
         this.burstParticles.shift();
       }
-      const angle = (k / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
-      const speed = enemy.kind === 'boss' ? 110 + Math.random() * 110 : 75 + Math.random() * 85;
-      const maxTimer = 0.26 + Math.random() * 0.12;
+      const angle = (k / spec.count) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
+      const speed = spec.speedMin + Math.random() * (spec.speedMax - spec.speedMin);
+      const maxTimer = spec.lifetimeMin + Math.random() * (spec.lifetimeMax - spec.lifetimeMin);
       this.burstParticles.push({
         x: enemy.x,
         y: enemy.y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        size: enemy.kind === 'boss' ? 6 : enemy.kind === 'elite' ? 5 : 4,
+        size: spec.size,
         color: colors[k % colors.length],
         timer: maxTimer,
         maxTimer,
+        rot: Math.random() * Math.PI,
+        spin: (Math.random() - 0.5) * 2 * spec.spinMax,
       });
     }
   }
@@ -1425,7 +1514,18 @@ export class GameScene extends Phaser.Scene {
     damage: number,
     sourceX = this.playerX,
     sourceY = this.playerY,
+    evolvedHit = false,
   ): void {
+    // The boss kill ends the run inside this call (finishRun captures the
+    // settlement), but the sword/lantern loops and the dart update may
+    // still be iterating — without this guard they would keep killing
+    // after settlement and the settlement would undercount.
+    // The bossDying half covers the death cinematic: the lethal hit
+    // decides the run, so no damage after it may move the settlement
+    // counters (kills / maxConcurrent) while the round timer is frozen.
+    if (this.ended || this.bossDying) {
+      return;
+    }
     const enemy = this.enemies[index];
     enemy.hp -= damage;
     enemy.hitFlash = ENEMY_HIT_FLASH_DURATION;
@@ -1443,16 +1543,28 @@ export class GameScene extends Phaser.Scene {
     enemy.knockbackOffsetY = kb.y;
 
     const isKill = enemy.hp <= 0;
-    this.spawnDamageNumber(enemy, damage, isKill);
+    this.spawnDamageNumber(enemy, damage, isKill, evolvedHit);
 
     if (isKill) {
       this.spawnDeathBurst(enemy);
       if (enemy.kind === 'boss') {
-        for (let k = 0; k < BOSS_XP_ORBS; k += 1) {
-          const spawnPos = computeBossOrbSpawnPos(enemy.x, enemy.y, k, BOSS_XP_ORBS);
-          this.spawnOrbAt(spawnPos.x, spawnPos.y, computeOrbScatterVelocity(k, BOSS_XP_ORBS));
-        }
-      } else if (enemy.kind === 'elite') {
+        // Boss kill starts the death cinematic instead of settling at
+        // once: the world runs in slow motion while the boss shatters,
+        // and the win settles after it (update() calls finishRun).
+        // No XP orbs are dropped.
+        enemy.sprite.destroy();
+        this.enemies.splice(index, 1);
+        this.kills += 1;
+        this.bossDying = true;
+        this.bossDeathTimer = 0;
+        // Freeze the settlement counters at the lethal hit (Codex round-3
+        // Block): the round timer stops here, so the win settlement must
+        // report exactly these values.
+        this.bossKillKills = this.kills;
+        this.bossKillMaxConcurrent = this.maxConcurrent;
+        return;
+      }
+      if (enemy.kind === 'elite') {
         for (let k = 0; k < ELITE_XP_ORBS; k += 1) {
           this.spawnOrbAt(enemy.x, enemy.y, computeOrbScatterVelocity(k, ELITE_XP_ORBS));
         }
@@ -1466,6 +1578,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private gainXp(amount: number): void {
+    // No level-ups during the boss-death cinematic: the modal would fight
+    // the win settlement for the screen.
+    if (this.bossDying) {
+      return;
+    }
     this.xp += amount;
     const needed = xpNeededForLevel(this.level);
     if (!this.isLevelUpOpen && !this.ended && this.xp >= needed) {
@@ -1518,6 +1635,11 @@ export class GameScene extends Phaser.Scene {
     );
 
     this.activeChoices = [];
+    // Input grace period: the modal pops up while the player is still
+    // moving/tapping, so an instant tap would pick a card by accident.
+    // Cards render dimmed and ignore input for the first 400ms.
+    this.levelUpInputLocked = true;
+    const cards: Phaser.GameObjects.Rectangle[] = [];
     options.forEach((opt, idx) => {
       const cx = CHOICE_CARD_X[idx];
       const cy = CHOICE_CARD_Y;
@@ -1531,7 +1653,9 @@ export class GameScene extends Phaser.Scene {
       const card = this.add
         .rectangle(cx, cy, CHOICE_CARD_W, CHOICE_CARD_H, baseFill)
         .setStrokeStyle(strokeWidth, baseStroke)
-        .setInteractive({ useHandCursor: true });
+        .setInteractive({ useHandCursor: true })
+        .setAlpha(0.55);
+      cards.push(card);
 
       const badgeText = addPixelText(this, cx, cy - 74, badge.text, {
         size: 24,
@@ -1575,11 +1699,26 @@ export class GameScene extends Phaser.Scene {
         card.setStrokeStyle(strokeWidth, baseStroke);
       });
       card.on('pointerdown', () => {
+        if (this.levelUpInputLocked) {
+          return;
+        }
         this.chooseOption(opt);
       });
 
       modal.add([card, badgeText, titleText, descText]);
       this.activeChoices.push({ id: opt.id, title: opt.title, x: cx, y: cy });
+    });
+
+    this.time.delayedCall(400, () => {
+      // The modal may already be gone (debug setHp/setTimeLeft can end the
+      // run while it is open); only restore cards that still exist.
+      if (!this.levelUpModal) {
+        return;
+      }
+      this.levelUpInputLocked = false;
+      for (const card of cards) {
+        card.setAlpha(1);
+      }
     });
 
     this.levelUpModal = modal;
@@ -1593,6 +1732,10 @@ export class GameScene extends Phaser.Scene {
       this.lanternActiveRemaining = this.stats.weapons.lantern_fire.duration;
       this.lanternTickTimer = 0;
       this.lanternCooldownRemaining = 0;
+    }
+
+    if (choice.category === 'evolution' && choice.weaponId) {
+      this.showBanner(`武器进化 · ${EVOLUTION_DEFS[choice.weaponId].name}`, 'evolution');
     }
 
     this.levelUpModal?.destroy(true);
@@ -1721,12 +1864,16 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Death burst pixel particles
+    // Death burst pixel fragments (tumble as they fly, shrink as they fade)
     for (const p of this.burstParticles) {
       const alpha = Math.max(0, p.timer / p.maxTimer);
       const sz = Math.max(2, Math.round(p.size * (0.5 + 0.5 * alpha)));
       g.fillStyle(p.color, alpha);
-      g.fillRect(Math.round(p.x - sz / 2), Math.round(p.y - sz / 2), sz, sz);
+      g.save();
+      g.translateCanvas(Math.round(p.x), Math.round(p.y));
+      g.rotateCanvas(p.rot);
+      g.fillRect(Math.round(-sz / 2), Math.round(-sz / 2), sz, sz);
+      g.restore();
     }
 
     // Player sprite (hit flash -> 2-frame sword swing -> 2-frame walk -> idle)
@@ -1807,7 +1954,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private finishRun(won: boolean): void {
+  private finishRun(won: boolean, winReason: 'dawn' | 'boss' = 'dawn'): void {
     if (this.ended) {
       return;
     }
@@ -1835,12 +1982,18 @@ export class GameScene extends Phaser.Scene {
 
     const settlement: SettlementData = {
       won,
-      survivedSeconds: won
-        ? ROUND_DURATION_SECONDS
-        : Math.min(ROUND_DURATION_SECONDS, Math.round(this.elapsedSeconds)),
+      // A boss-kill win ends the run early, so it records the actual
+      // elapsed time instead of the full 180s dawn win.
+      survivedSeconds:
+        winReason === 'boss'
+          ? Math.min(ROUND_DURATION_SECONDS, Math.round(this.elapsedSeconds))
+          : won
+            ? ROUND_DURATION_SECONDS
+            : Math.min(ROUND_DURATION_SECONDS, Math.round(this.elapsedSeconds)),
       kills: this.kills,
       level: this.level,
       maxConcurrent: this.maxConcurrent,
+      winReason: won ? winReason : undefined,
     };
     this.scene.start('GameOverScene', settlement);
   }

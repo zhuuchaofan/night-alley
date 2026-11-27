@@ -207,4 +207,134 @@ test.describe('Night Alley enemy variety (stage 4)', () => {
     expect(killSample.killed).toBe(true);
     expect(killSample.orbsDelta).toBeGreaterThanOrEqual(3);
   });
+
+  test('4. shooter retreating while clamped against wall aims from post-move position', async ({
+    page,
+  }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      const dbg = window.__NIGHT_ALLEY_DEBUG__;
+      if (!dbg) {
+        throw new Error('Missing debug hook');
+      }
+      dbg.setHp(30);
+      dbg.setTimeLeft(179);
+    });
+
+    await page.keyboard.down('KeyA');
+    await page.waitForFunction(
+      () => (window.__NIGHT_ALLEY_DEBUG__?.getState().playerX ?? 999) <= 140,
+      undefined,
+      { timeout: 10000 },
+    );
+    await page.keyboard.up('KeyA');
+
+    await page.evaluate(() => {
+      const dbg = window.__NIGHT_ALLEY_DEBUG__!;
+      dbg.setHp(30);
+      dbg.setTimeLeft(179);
+    });
+
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: 40 });
+      await page.evaluate(() => {
+        const dbg = window.__NIGHT_ALLEY_DEBUG__;
+        if (!dbg?.spawnEnemyKind) {
+          throw new Error('Missing spawnEnemyKind debug hook');
+        }
+        dbg.spawnEnemyKind('shooter', -100, 40);
+      });
+
+      const sample = await page.evaluate(
+        () =>
+          new Promise<{
+            ok: boolean;
+            reason?: string;
+            b0?: { x: number; y: number };
+            b1?: { x: number; y: number };
+            player?: { x: number; y: number };
+            lineDistToPlayer?: number;
+          }>((resolve) => {
+            const dbg = window.__NIGHT_ALLEY_DEBUG__!;
+            const started = performance.now();
+            let sawZeroBoltsAtWall = false;
+            let b0: { x: number; y: number } | null = null;
+            let lastBolt: { x: number; y: number } | null = null;
+            let playerAtB0: { x: number; y: number } | null = null;
+
+            const finishWith = (
+              b1: { x: number; y: number },
+              p: { x: number; y: number },
+            ): void => {
+              if (!b0) {
+                resolve({ ok: false, reason: 'Missing b0 sample' });
+                return;
+              }
+              const vx = b1.x - b0.x;
+              const vy = b1.y - b0.y;
+              const len = Math.hypot(vx, vy);
+              if (len < 1e-3) {
+                resolve({
+                  ok: false,
+                  reason: 'Bolt did not move enough between samples',
+                  b0,
+                  b1,
+                  player: p,
+                });
+                return;
+              }
+              const lineDistToPlayer = Math.abs((p.x - b0.x) * vy - (p.y - b0.y) * vx) / len;
+              resolve({ ok: true, b0, b1, player: p, lineDistToPlayer });
+            };
+
+            const tick = (): void => {
+              const s = dbg.getState();
+              if (s.hp < 20) {
+                dbg.setHp(30);
+              }
+              const shooter = s.gameFeel?.enemies.find((e) => e.kind === 'shooter');
+              const atWall = Boolean(shooter && shooter.x <= 12);
+              const bolts = s.bolts ?? [];
+
+              if (atWall && bolts.length === 0 && !b0) {
+                sawZeroBoltsAtWall = true;
+              }
+
+              if (b0 && playerAtB0) {
+                if (bolts.length === 0) {
+                  finishWith(lastBolt ?? b0, playerAtB0);
+                  return;
+                }
+                const cur = bolts[0];
+                lastBolt = { x: cur.x, y: cur.y };
+                if (Math.hypot(cur.x - b0.x, cur.y - b0.y) >= 25) {
+                  finishWith(lastBolt, playerAtB0);
+                  return;
+                }
+              } else if (atWall && sawZeroBoltsAtWall && bolts.length > 0) {
+                b0 = { x: bolts[0].x, y: bolts[0].y };
+                lastBolt = { ...b0 };
+                playerAtB0 = { x: s.playerX, y: s.playerY };
+              }
+
+              if (performance.now() - started > 30000) {
+                resolve({
+                  ok: false,
+                  reason: `Timed out (atWall=${atWall}, sawZeroBoltsAtWall=${sawZeroBoltsAtWall}, hasB0=${Boolean(b0)}, bolts=${bolts.length})`,
+                });
+                return;
+              }
+              requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          }),
+      );
+
+      expect(sample.ok, sample.reason).toBe(true);
+      expect(sample.lineDistToPlayer).toBeLessThan(1.5);
+    } finally {
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    }
+  });
 });

@@ -893,9 +893,9 @@ export class GameScene extends Phaser.Scene {
 
   private updateEnemies(dt: number): void {
     for (const enemy of this.enemies) {
-      const dx = this.playerX - enemy.x;
-      const dy = this.playerY - enemy.y;
-      const dist = Math.hypot(dx, dy);
+      let dx = this.playerX - enemy.x;
+      let dy = this.playerY - enemy.y;
+      let dist = Math.hypot(dx, dy);
 
       if (enemy.kind === 'shooter') {
         if (dist < SHOOTER_RETREAT_DIST) {
@@ -921,6 +921,10 @@ export class GameScene extends Phaser.Scene {
           enemy.x += (dx / dist) * enemy.speed * dt;
           enemy.y += (dy / dist) * enemy.speed * dt;
         }
+
+        dx = this.playerX - enemy.x;
+        dy = this.playerY - enemy.y;
+        dist = Math.hypot(dx, dy);
 
         enemy.fireCooldown = Math.max(0, enemy.fireCooldown - dt);
         if (dist <= SHOOTER_RANGE && enemy.fireCooldown <= 0) {

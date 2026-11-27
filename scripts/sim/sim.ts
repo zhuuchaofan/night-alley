@@ -588,9 +588,9 @@ export function runSingleSim(seed: number): RunResult {
   const updateEnemies = (dt: number): boolean => {
     for (let i = 0; i < enemies.length; i += 1) {
       const enemy = enemies[i];
-      const dx = playerX - enemy.x;
-      const dy = playerY - enemy.y;
-      const dist = Math.hypot(dx, dy);
+      let dx = playerX - enemy.x;
+      let dy = playerY - enemy.y;
+      let dist = Math.hypot(dx, dy);
 
       if (enemy.kind === 'shooter') {
         if (dist < SHOOTER_RETREAT_DIST) {
@@ -612,6 +612,10 @@ export function runSingleSim(seed: number): RunResult {
           enemy.x += (dx / dist) * enemy.speed * dt;
           enemy.y += (dy / dist) * enemy.speed * dt;
         }
+
+        dx = playerX - enemy.x;
+        dy = playerY - enemy.y;
+        dist = Math.hypot(dx, dy);
 
         enemy.fireCooldown = Math.max(0, enemy.fireCooldown - dt);
         if (dist <= SHOOTER_RANGE && enemy.fireCooldown <= 0) {

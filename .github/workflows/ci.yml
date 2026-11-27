@@ -1,0 +1,53 @@
+name: CI
+
+# 一个推送只跑一次 CI：PR 事件触发分支上的检查，push 只对 main 跑；
+# 同一分支的新推送取消旧的进行中运行（以前 push + pull_request 各跑一次，
+# 逐文件推十几个提交就是几十次运行，失败一次就发一封邮件）。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run unit tests
+        run: npm run test
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install Playwright Chromium
+        # 浏览器已在缓存中时此步跳过下载（只装系统依赖），不再每次下载约 150MB；
+        # Playwright 版本变化（package-lock.json 变化）时缓存 key 变化，自动重新下载。
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npm run test:e2e

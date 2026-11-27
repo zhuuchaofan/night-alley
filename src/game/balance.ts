@@ -3,7 +3,7 @@ export const ARENA_HEIGHT = 540;
 export const HUD_HEIGHT = 44;
 export const ROUND_DURATION_SECONDS = 180;
 export const SPAWN_MARGIN = 30;
-export const MAX_ENEMIES = 60;
+export const MAX_ENEMIES = 65;
 
 export const PLAYER_MAX_HP = 30;
 export const PLAYER_SPEED = 160;
@@ -23,6 +23,14 @@ export const ENEMY_CONTACT_DAMAGE = 2;
 export const ENEMY_ATTACK_COOLDOWN = 0.5;
 export const ENEMY_RADIUS = 10;
 export const ENEMY_COLOR = 0x9a8fb5;
+
+export const BOSS_SPAWN_ELAPSED_SECONDS = 150;
+export const BOSS_MAX_HP = 120;
+export const BOSS_SPEED = 85;
+export const BOSS_CONTACT_DAMAGE = 4;
+export const BOSS_ATTACK_COOLDOWN = 1.75;
+export const BOSS_RADIUS = 24;
+export const BOSS_XP_ORBS = 20;
 
 export type WeaponId = 'peach_sword' | 'coin_dart' | 'lantern_fire';
 
@@ -109,6 +117,14 @@ export interface EnemyStats {
   attackCooldown: number;
   radius: number;
 }
+
+export const BOSS_STATS: Readonly<EnemyStats> = {
+  maxHp: BOSS_MAX_HP,
+  speed: BOSS_SPEED,
+  contactDamage: BOSS_CONTACT_DAMAGE,
+  attackCooldown: BOSS_ATTACK_COOLDOWN,
+  radius: BOSS_RADIUS,
+};
 
 /** XP required to advance from `level` to `level + 1`. */
 export function xpNeededForLevel(level: number): number {

@@ -38,6 +38,8 @@ export interface DebugState {
   playerY: number;
   isLevelUpOpen: boolean;
   levelUpChoices: DebugChoiceInfo[];
+  bossSpawned: boolean;
+  bossAlive: boolean;
   slashes?: DebugSlashInfo[];
   settlement: SettlementData | null;
 }

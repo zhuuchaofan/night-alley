@@ -35,6 +35,7 @@ function collectAllGameUiStrings(): string[] {
     '03:00',
     'Lv.1',
     '击杀 0',
+    '大心魔现身',
     ...WEAPON_ORDER.map((id) => `${WEAPON_DEFS[id].name} Lv.1`),
     // Level-up modal
     '升至 Lv.2 · 三选一',

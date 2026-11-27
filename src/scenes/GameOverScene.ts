@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { ARENA_HEIGHT, ARENA_WIDTH, formatTime, PLAYER_MAX_HP } from '../game/balance.ts';
 import { registerDebugHook, SettlementData } from '../game/debug.ts';
-
-const FONT_FAMILY = 'monospace, sans-serif';
+import { addPixelText } from '../game/pixelFont.ts';
+import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
 
 export class GameOverScene extends Phaser.Scene {
   private settlement: SettlementData = {
@@ -26,19 +26,25 @@ export class GameOverScene extends Phaser.Scene {
   create(): void {
     const { won, survivedSeconds, kills, level, maxConcurrent } = this.settlement;
 
-    this.add.rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, ARENA_WIDTH, ARENA_HEIGHT, 0x14101c);
-    this.add
-      .rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, 560, 360, 0x1d1729)
-      .setStrokeStyle(2, won ? 0xe8b34b : 0x9a8fb5);
+    ensureGameTextures(this);
+    buildNightAlleyBackdrop(this, 0);
 
     this.add
-      .text(ARENA_WIDTH / 2, 138, won ? '天亮了 · 守夜成功' : '倒在夜巷', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '34px',
-        fontStyle: 'bold',
-        color: won ? '#e8b34b' : '#e06c75',
-      })
-      .setOrigin(0.5);
+      .rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, 620, 380, 0x1b2a4a)
+      .setStrokeStyle(2, won ? 0xe8b34b : 0xb03a2e)
+      .setDepth(10);
+
+    const heading = won ? '天亮了 · 守夜成功' : '倒在夜巷';
+    addPixelText(this, ARENA_WIDTH / 2 + 2, 128 + 2, heading, {
+      size: 48,
+      color: PALETTE.inkBlack,
+      origin: 0.5,
+    }).setDepth(11);
+    addPixelText(this, ARENA_WIDTH / 2, 128, heading, {
+      size: 48,
+      color: won ? PALETTE.lanternYellow : PALETTE.paperWhite,
+      origin: 0.5,
+    }).setDepth(12);
 
     const lines = [
       `存活时间：${formatTime(survivedSeconds)}`,
@@ -48,20 +54,18 @@ export class GameOverScene extends Phaser.Scene {
     ];
 
     lines.forEach((line, idx) => {
-      this.add
-        .text(ARENA_WIDTH / 2, 206 + idx * 36, line, {
-          fontFamily: FONT_FAMILY,
-          fontSize: '20px',
-          color: '#f2e3c6',
-        })
-        .setOrigin(0.5);
+      addPixelText(this, ARENA_WIDTH / 2, 200 + idx * 38, line, {
+        size: 24,
+        color: PALETTE.candleLight,
+        origin: 0.5,
+      }).setDepth(11);
     });
 
     this.createButton(370, 405, '再来一局', 0x2e2118, 0xe8b34b, () => {
       this.scene.start('GameScene');
     });
 
-    this.createButton(590, 405, '返回标题', 0x221b30, 0x9a8fb5, () => {
+    this.createButton(590, 405, '返回标题', 0x10182b, 0x8fa8c8, () => {
       this.scene.start('TitleScene');
     });
 
@@ -101,22 +105,22 @@ export class GameOverScene extends Phaser.Scene {
     const rect = this.add
       .rectangle(x, y, 170, 48, fillColor)
       .setStrokeStyle(2, borderColor)
+      .setDepth(11)
       .setInteractive({ useHandCursor: true });
 
-    this.add
-      .text(x, y, label, {
-        fontFamily: FONT_FAMILY,
-        fontSize: '18px',
-        fontStyle: 'bold',
-        color: '#f2e3c6',
-      })
-      .setOrigin(0.5);
+    const text = addPixelText(this, x, y, label, {
+      size: 24,
+      color: PALETTE.paperWhite,
+      origin: 0.5,
+    }).setDepth(12);
 
     rect.on('pointerover', () => {
-      rect.setFillStyle(0x3a2b46);
+      rect.setFillStyle(0x2e4a73);
+      text.setTint(0xe8b34b);
     });
     rect.on('pointerout', () => {
       rect.setFillStyle(fillColor);
+      text.setTint(0xfbf6e9);
     });
     rect.on('pointerdown', onClick);
   }

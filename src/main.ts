@@ -9,7 +9,10 @@ new Phaser.Game({
   parent: 'game-container',
   width: ARENA_WIDTH,
   height: ARENA_HEIGHT,
-  backgroundColor: '#14101c',
+  backgroundColor: '#10182B',
+  pixelArt: true,
+  antialias: false,
+  roundPixels: true,
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,

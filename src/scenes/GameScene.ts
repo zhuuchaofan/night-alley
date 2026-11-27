@@ -3,7 +3,6 @@ import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
   createInitialPlayerStats,
-  ENEMY_COLOR,
   ENEMY_RADIUS,
   enemyStatsAt,
   formatTime,
@@ -11,7 +10,6 @@ import {
   MAX_ENEMIES,
   ORB_PULL_SPEED,
   ORB_RADIUS,
-  PLAYER_COLOR,
   PLAYER_RADIUS,
   PlayerStats,
   ROUND_DURATION_SECONDS,
@@ -24,10 +22,18 @@ import {
 } from '../game/balance.ts';
 import { applyChoice, ChoiceOption, generateChoices } from '../game/choices.ts';
 import { DebugChoiceInfo, registerDebugHook, SettlementData } from '../game/debug.ts';
+import {
+  computeJoystickInput,
+  JOYSTICK_DEADZONE_PX,
+  JOYSTICK_MAX_DISTANCE_PX,
+} from '../game/joystick.ts';
+import { addPixelText, wrapPixelText } from '../game/pixelFont.ts';
+import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
 
-const FONT_FAMILY = 'monospace, sans-serif';
+type EnemyKind = 'paper' | 'lantern';
 
 interface EnemyEntity {
+  kind: EnemyKind;
   x: number;
   y: number;
   hp: number;
@@ -37,11 +43,13 @@ interface EnemyEntity {
   attackCooldown: number;
   attackCooldownRemaining: number;
   hitFlash: number;
+  sprite: Phaser.GameObjects.Image;
 }
 
 interface OrbEntity {
   x: number;
   y: number;
+  sprite: Phaser.GameObjects.Image;
 }
 
 interface DartEntity {
@@ -51,6 +59,7 @@ interface DartEntity {
   vy: number;
   damage: number;
   radius: number;
+  sprite: Phaser.GameObjects.Image;
 }
 
 interface SlashEffect {
@@ -58,9 +67,9 @@ interface SlashEffect {
   y: number;
   angle: number;
   range: number;
-  arcRad: number;
   timer: number;
   maxTimer: number;
+  sprite: Phaser.GameObjects.Image;
 }
 
 interface MovementKeys {
@@ -74,15 +83,15 @@ interface MovementKeys {
   right: Phaser.Input.Keyboard.Key;
 }
 
-const CHOICE_CARD_X = [200, 480, 760];
-const CHOICE_CARD_Y = 295;
-const CHOICE_CARD_W = 240;
-const CHOICE_CARD_H = 180;
+const CHOICE_CARD_X = [188, 480, 772];
+const CHOICE_CARD_Y = 310;
+const CHOICE_CARD_W = 280;
+const CHOICE_CARD_H = 210;
 
 const CATEGORY_LABEL: Record<ChoiceOption['category'], { text: string; color: string }> = {
-  new_weapon: { text: '新武器', color: '#e8b34b' },
-  weapon_upgrade: { text: '武器强化', color: '#6ec4ff' },
-  stat: { text: '属性提升', color: '#56d4a0' },
+  new_weapon: { text: '新武器', color: PALETTE.lanternYellow },
+  weapon_upgrade: { text: '武器强化', color: PALETTE.silverBlue },
+  stat: { text: '属性提升', color: PALETTE.jadeGreen },
 };
 
 function normalizeAngleDiff(a: number, b: number): number {
@@ -97,6 +106,9 @@ export class GameScene extends Phaser.Scene {
   private playerX = ARENA_WIDTH / 2;
   private playerY = (ARENA_HEIGHT + HUD_HEIGHT) / 2;
   private playerHitFlash = 0;
+  private playerFacingLeft = false;
+  private playerWalkTimer = 0;
+  private playerMoving = false;
 
   private level = 1;
   private xp = 0;
@@ -104,6 +116,7 @@ export class GameScene extends Phaser.Scene {
   private elapsedSeconds = 0;
   private timeLeft = ROUND_DURATION_SECONDS;
   private maxConcurrent = 0;
+  private enemySpawnCount = 0;
   private ended = false;
 
   private enemies: EnemyEntity[] = [];
@@ -117,6 +130,7 @@ export class GameScene extends Phaser.Scene {
   private lanternActiveRemaining = 0;
   private lanternTickTimer = 0;
   private lanternCooldownRemaining = 0;
+  private lanternAnimTimer = 0;
 
   private isDragging = false;
   private dragOriginX = 0;
@@ -130,14 +144,18 @@ export class GameScene extends Phaser.Scene {
 
   private keys: MovementKeys | null = null;
   private worldGfx!: Phaser.GameObjects.Graphics;
+  private joystickGfx!: Phaser.GameObjects.Graphics;
+  private playerSprite!: Phaser.GameObjects.Image;
+  private lanternRingSprite!: Phaser.GameObjects.Image;
 
   private hpBarFill!: Phaser.GameObjects.Rectangle;
-  private hpText!: Phaser.GameObjects.Text;
-  private timerText!: Phaser.GameObjects.Text;
-  private levelText!: Phaser.GameObjects.Text;
+  private hpText!: Phaser.GameObjects.BitmapText;
+  private timerText!: Phaser.GameObjects.BitmapText;
+  private levelText!: Phaser.GameObjects.BitmapText;
   private xpBarFill!: Phaser.GameObjects.Rectangle;
-  private killsText!: Phaser.GameObjects.Text;
-  private loadoutText!: Phaser.GameObjects.Text;
+  private killsText!: Phaser.GameObjects.BitmapText;
+  private loadoutBg!: Phaser.GameObjects.Rectangle;
+  private loadoutText!: Phaser.GameObjects.BitmapText;
 
   constructor() {
     super('GameScene');
@@ -145,9 +163,19 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.resetRunState();
-    this.drawArenaFloor();
+    ensureGameTextures(this);
+    buildNightAlleyBackdrop(this, HUD_HEIGHT);
 
-    this.worldGfx = this.add.graphics().setDepth(10);
+    this.lanternRingSprite = this.add
+      .image(this.playerX, this.playerY, 'lantern_ring_1')
+      .setDepth(6)
+      .setVisible(false);
+    this.playerSprite = this.add
+      .image(this.playerX, this.playerY, 'player_idle')
+      .setDepth(10);
+
+    this.worldGfx = this.add.graphics().setDepth(13);
+    this.joystickGfx = this.add.graphics().setDepth(25);
     this.createHud();
     this.setupInputs();
     this.registerSceneDebugHook();
@@ -160,6 +188,9 @@ export class GameScene extends Phaser.Scene {
     this.playerX = ARENA_WIDTH / 2;
     this.playerY = (ARENA_HEIGHT + HUD_HEIGHT) / 2;
     this.playerHitFlash = 0;
+    this.playerFacingLeft = false;
+    this.playerWalkTimer = 0;
+    this.playerMoving = false;
 
     this.level = 1;
     this.xp = 0;
@@ -167,6 +198,7 @@ export class GameScene extends Phaser.Scene {
     this.elapsedSeconds = 0;
     this.timeLeft = ROUND_DURATION_SECONDS;
     this.maxConcurrent = 0;
+    this.enemySpawnCount = 0;
     this.ended = false;
 
     this.enemies = [];
@@ -180,6 +212,7 @@ export class GameScene extends Phaser.Scene {
     this.lanternActiveRemaining = 0;
     this.lanternTickTimer = 0;
     this.lanternCooldownRemaining = 0;
+    this.lanternAnimTimer = 0;
 
     this.isDragging = false;
     this.isLevelUpOpen = false;
@@ -187,84 +220,64 @@ export class GameScene extends Phaser.Scene {
     this.levelUpModal = null;
   }
 
-  private drawArenaFloor(): void {
-    const floor = this.add.graphics().setDepth(0);
-    floor.fillStyle(0x14101c, 1);
-    floor.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
-
-    floor.lineStyle(1, 0x1f192c, 1);
-    for (let x = 0; x <= ARENA_WIDTH; x += 48) {
-      floor.lineBetween(x, HUD_HEIGHT, x, ARENA_HEIGHT);
-    }
-    for (let y = HUD_HEIGHT; y <= ARENA_HEIGHT; y += 48) {
-      floor.lineBetween(0, y, ARENA_WIDTH, y);
-    }
-  }
-
   private createHud(): void {
     this.add
-      .rectangle(ARENA_WIDTH / 2, HUD_HEIGHT / 2, ARENA_WIDTH, HUD_HEIGHT, 0x1b1526)
+      .rectangle(ARENA_WIDTH / 2, HUD_HEIGHT / 2, ARENA_WIDTH, HUD_HEIGHT, 0x10182b)
       .setDepth(20);
     this.add
-      .rectangle(ARENA_WIDTH / 2, HUD_HEIGHT, ARENA_WIDTH, 2, 0x3b2f52)
+      .rectangle(ARENA_WIDTH / 2, HUD_HEIGHT, ARENA_WIDTH, 2, 0x2e4a73)
       .setDepth(20);
 
     // Left: HP bar + label
-    this.add.rectangle(16, 22, 160, 16, 0x2a2038).setOrigin(0, 0.5).setDepth(21);
-    this.hpBarFill = this.add.rectangle(16, 22, 160, 16, 0xd9534f).setOrigin(0, 0.5).setDepth(22);
-    this.hpText = this.add
-      .text(186, 22, '', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '15px',
-        fontStyle: 'bold',
-        color: '#f2e3c6',
-      })
+    this.add
+      .rectangle(14, 22, 110, 16, 0x1b2a4a)
+      .setStrokeStyle(2, 0x17120c)
       .setOrigin(0, 0.5)
-      .setDepth(22);
+      .setDepth(21);
+    this.hpBarFill = this.add.rectangle(14, 22, 110, 16, 0xb03a2e).setOrigin(0, 0.5).setDepth(22);
+    this.hpText = addPixelText(this, 132, 22, '', {
+      size: 24,
+      color: PALETTE.candleLight,
+      origin: [0, 0.5],
+    }).setDepth(22);
 
     // Center: countdown
-    this.timerText = this.add
-      .text(ARENA_WIDTH / 2, 22, '', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '20px',
-        fontStyle: 'bold',
-        color: '#e8b34b',
-      })
-      .setOrigin(0.5)
-      .setDepth(22);
+    this.timerText = addPixelText(this, ARENA_WIDTH / 2, 22, '', {
+      size: 24,
+      color: PALETTE.lanternYellow,
+      origin: 0.5,
+    }).setDepth(22);
 
     // Right: level + XP bar + kills
-    this.levelText = this.add
-      .text(622, 22, '', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '15px',
-        fontStyle: 'bold',
-        color: '#56d4a0',
-      })
+    this.levelText = addPixelText(this, 570, 22, '', {
+      size: 24,
+      color: PALETTE.jadeGreen,
+      origin: [0, 0.5],
+    }).setDepth(22);
+
+    this.add
+      .rectangle(644, 22, 120, 14, 0x1b2a4a)
+      .setStrokeStyle(2, 0x17120c)
       .setOrigin(0, 0.5)
-      .setDepth(22);
+      .setDepth(21);
+    this.xpBarFill = this.add.rectangle(644, 22, 0, 14, 0x4e7a5a).setOrigin(0, 0.5).setDepth(22);
 
-    this.add.rectangle(684, 22, 132, 12, 0x2a2038).setOrigin(0, 0.5).setDepth(21);
-    this.xpBarFill = this.add.rectangle(684, 22, 0, 12, 0x56d4a0).setOrigin(0, 0.5).setDepth(22);
+    this.killsText = addPixelText(this, 946, 22, '', {
+      size: 24,
+      color: PALETTE.candleLight,
+      origin: [1, 0.5],
+    }).setDepth(22);
 
-    this.killsText = this.add
-      .text(944, 22, '', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '15px',
-        fontStyle: 'bold',
-        color: '#f2e3c6',
-      })
-      .setOrigin(1, 0.5)
-      .setDepth(22);
-
-    this.loadoutText = this.add
-      .text(14, ARENA_HEIGHT - 14, '', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '13px',
-        color: '#9a8fb5',
-      })
+    this.loadoutBg = this.add
+      .rectangle(10, ARENA_HEIGHT - 8, 120, 30, 0x10182b)
+      .setStrokeStyle(2, 0x2e4a73)
       .setOrigin(0, 1)
-      .setDepth(20);
+      .setDepth(19);
+    this.loadoutText = addPixelText(this, 18, ARENA_HEIGHT - 12, '', {
+      size: 24,
+      color: PALETTE.silverBlue,
+      origin: [0, 1],
+    }).setDepth(20);
   }
 
   private setupInputs(): void {
@@ -399,6 +412,7 @@ export class GameScene extends Phaser.Scene {
   private updatePlayerMovement(dt: number): void {
     let dx = 0;
     let dy = 0;
+    let speedFactor = 0;
 
     if (this.keys) {
       if (this.keys.a.isDown || this.keys.left.isDown) dx -= 1;
@@ -407,31 +421,41 @@ export class GameScene extends Phaser.Scene {
       if (this.keys.s.isDown || this.keys.down.isDown) dy += 1;
     }
 
-    if (dx === 0 && dy === 0 && this.isDragging) {
-      const dragX = this.dragCurrentX - this.dragOriginX;
-      const dragY = this.dragCurrentY - this.dragOriginY;
-      const dist = Math.hypot(dragX, dragY);
-      if (dist > 8) {
-        dx = dragX / dist;
-        dy = dragY / dist;
-      }
-    } else if (dx !== 0 || dy !== 0) {
+    if (dx !== 0 || dy !== 0) {
       const len = Math.hypot(dx, dy);
       dx /= len;
       dy /= len;
+      speedFactor = 1;
+    } else if (this.isDragging) {
+      const joy = computeJoystickInput(
+        this.dragCurrentX - this.dragOriginX,
+        this.dragCurrentY - this.dragOriginY,
+      );
+      dx = joy.dx;
+      dy = joy.dy;
+      speedFactor = joy.speedFactor;
     }
 
-    if (dx !== 0 || dy !== 0) {
+    this.playerMoving = speedFactor > 0 && (dx !== 0 || dy !== 0);
+    if (this.playerMoving) {
+      if (dx < -0.05) {
+        this.playerFacingLeft = true;
+      } else if (dx > 0.05) {
+        this.playerFacingLeft = false;
+      }
+      this.playerWalkTimer += dt;
       this.playerX = Phaser.Math.Clamp(
-        this.playerX + dx * this.stats.speed * dt,
+        this.playerX + dx * this.stats.speed * speedFactor * dt,
         PLAYER_RADIUS,
         ARENA_WIDTH - PLAYER_RADIUS,
       );
       this.playerY = Phaser.Math.Clamp(
-        this.playerY + dy * this.stats.speed * dt,
+        this.playerY + dy * this.stats.speed * speedFactor * dt,
         HUD_HEIGHT + PLAYER_RADIUS,
         ARENA_HEIGHT - PLAYER_RADIUS,
       );
+    } else {
+      this.playerWalkTimer = 0;
     }
 
     if (this.playerHitFlash > 0) {
@@ -467,7 +491,14 @@ export class GameScene extends Phaser.Scene {
 
   private spawnEnemyAt(x: number, y: number): void {
     const template = enemyStatsAt(this.elapsedSeconds);
+    const kind: EnemyKind = this.enemySpawnCount % 3 === 1 ? 'lantern' : 'paper';
+    this.enemySpawnCount += 1;
+
+    const texKey = kind === 'lantern' ? 'enemy_lantern' : 'enemy_paper';
+    const sprite = this.add.image(x, y, texKey).setDepth(9);
+
     this.enemies.push({
+      kind,
       x,
       y,
       hp: template.maxHp,
@@ -477,6 +508,7 @@ export class GameScene extends Phaser.Scene {
       attackCooldown: template.attackCooldown,
       attackCooldownRemaining: 0,
       hitFlash: 0,
+      sprite,
     });
     if (this.enemies.length > this.maxConcurrent) {
       this.maxConcurrent = this.enemies.length;
@@ -500,7 +532,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Simple pairwise separation so enemies do not stack on top of each other
     const minDist = ENEMY_RADIUS * 2;
     for (let i = 0; i < this.enemies.length; i += 1) {
       const a = this.enemies[i];
@@ -560,14 +591,22 @@ export class GameScene extends Phaser.Scene {
             }
           }
 
+          const slashX = this.playerX + Math.cos(angle) * (sword.range * 0.48);
+          const slashY = this.playerY + Math.sin(angle) * (sword.range * 0.48);
+          const slashSprite = this.add
+            .image(slashX, slashY, 'slash_arc')
+            .setRotation(angle)
+            .setDisplaySize(sword.range * 1.05, sword.range * 1.4)
+            .setDepth(11);
+
           this.slashes.push({
             x: this.playerX,
             y: this.playerY,
             angle,
             range: sword.range,
-            arcRad: (sword.arcDeg * Math.PI) / 180,
             timer: 0.18,
             maxTimer: 0.18,
+            sprite: slashSprite,
           });
           this.swordCooldown = sword.cooldown;
         }
@@ -595,6 +634,10 @@ export class GameScene extends Phaser.Scene {
               const step = Math.floor((i - targets.length) / 2) + 1;
               angle += (i % 2 === 0 ? 1 : -1) * step * 0.14;
             }
+            const dartSprite = this.add
+              .image(this.playerX, this.playerY, 'coin_dart')
+              .setDisplaySize(24, 24)
+              .setDepth(11);
             this.darts.push({
               x: this.playerX,
               y: this.playerY,
@@ -602,6 +645,7 @@ export class GameScene extends Phaser.Scene {
               vy: Math.sin(angle) * dart.projectileSpeed,
               damage: dmg,
               radius: 5,
+              sprite: dartSprite,
             });
           }
           this.dartCooldown = dart.cooldown;
@@ -612,6 +656,7 @@ export class GameScene extends Phaser.Scene {
     const lantern = this.stats.weapons.lantern_fire;
     if (lantern) {
       if (this.lanternActiveRemaining > 0) {
+        this.lanternAnimTimer += dt;
         this.lanternActiveRemaining -= dt;
         this.lanternTickTimer -= dt;
         while (this.lanternTickTimer <= 0) {
@@ -644,6 +689,7 @@ export class GameScene extends Phaser.Scene {
       const dart = this.darts[i];
       dart.x += dart.vx * dt;
       dart.y += dart.vy * dt;
+      dart.sprite.rotation += dt * 10;
 
       if (
         dart.x < -40 ||
@@ -651,6 +697,7 @@ export class GameScene extends Phaser.Scene {
         dart.y < HUD_HEIGHT - 40 ||
         dart.y > ARENA_HEIGHT + 40
       ) {
+        dart.sprite.destroy();
         this.darts.splice(i, 1);
         continue;
       }
@@ -660,6 +707,7 @@ export class GameScene extends Phaser.Scene {
         const enemy = this.enemies[j];
         if (Math.hypot(enemy.x - dart.x, enemy.y - dart.y) <= hitRadius) {
           this.damageEnemyAt(j, dart.damage);
+          dart.sprite.destroy();
           this.darts.splice(i, 1);
           break;
         }
@@ -676,6 +724,7 @@ export class GameScene extends Phaser.Scene {
       const dist = Math.hypot(dx, dy);
 
       if (dist <= collectRadius) {
+        orb.sprite.destroy();
         this.orbs.splice(i, 1);
         this.gainXp(XP_PER_ORB);
         continue;
@@ -691,9 +740,16 @@ export class GameScene extends Phaser.Scene {
 
   private updateEffects(dt: number): void {
     for (let i = this.slashes.length - 1; i >= 0; i -= 1) {
-      this.slashes[i].timer -= dt;
-      if (this.slashes[i].timer <= 0) {
+      const slash = this.slashes[i];
+      slash.timer -= dt;
+      if (slash.timer <= 0) {
+        slash.sprite.destroy();
         this.slashes.splice(i, 1);
+      } else {
+        slash.sprite.setPosition(
+          this.playerX + Math.cos(slash.angle) * (slash.range * 0.48),
+          this.playerY + Math.sin(slash.angle) * (slash.range * 0.48),
+        );
       }
     }
   }
@@ -716,7 +772,12 @@ export class GameScene extends Phaser.Scene {
     enemy.hp -= damage;
     enemy.hitFlash = 0.08;
     if (enemy.hp <= 0) {
-      this.orbs.push({ x: enemy.x, y: enemy.y });
+      const orbSprite = this.add
+        .image(enemy.x, enemy.y, 'xp_orb')
+        .setDisplaySize(28, 28)
+        .setDepth(7);
+      this.orbs.push({ x: enemy.x, y: enemy.y, sprite: orbSprite });
+      enemy.sprite.destroy();
       this.enemies.splice(index, 1);
       this.kills += 1;
     }
@@ -740,29 +801,36 @@ export class GameScene extends Phaser.Scene {
     const modal = this.add.container(0, 0).setDepth(30);
 
     const backdrop = this.add
-      .rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, ARENA_WIDTH, ARENA_HEIGHT, 0x0b0812, 0.75)
+      .rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, ARENA_WIDTH, ARENA_HEIGHT, 0x10182b)
       .setInteractive();
     modal.add(backdrop);
 
+    const panelFrame = this.add
+      .rectangle(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, 912, 440, 0x1b2a4a)
+      .setStrokeStyle(2, 0xc9973f);
+    modal.add(panelFrame);
+
     modal.add(
-      this.add
-        .text(ARENA_WIDTH / 2, 118, `升至 Lv.${this.level} · 三选一`, {
-          fontFamily: FONT_FAMILY,
-          fontSize: '28px',
-          fontStyle: 'bold',
-          color: '#f2e3c6',
-        })
-        .setOrigin(0.5),
+      addPixelText(this, ARENA_WIDTH / 2 + 2, 106 + 2, `升至 Lv.${this.level} · 三选一`, {
+        size: 48,
+        color: PALETTE.inkBlack,
+        origin: 0.5,
+      }),
+    );
+    modal.add(
+      addPixelText(this, ARENA_WIDTH / 2, 106, `升至 Lv.${this.level} · 三选一`, {
+        size: 48,
+        color: PALETTE.lanternYellow,
+        origin: 0.5,
+      }),
     );
 
     modal.add(
-      this.add
-        .text(ARENA_WIDTH / 2, 154, '点击一项强化以继续守夜', {
-          fontFamily: FONT_FAMILY,
-          fontSize: '14px',
-          color: '#9a8fb5',
-        })
-        .setOrigin(0.5),
+      addPixelText(this, ARENA_WIDTH / 2, 162, '点击一项强化以继续守夜', {
+        size: 24,
+        color: PALETTE.candleLight,
+        origin: 0.5,
+      }),
     );
 
     this.activeChoices = [];
@@ -772,46 +840,49 @@ export class GameScene extends Phaser.Scene {
       const badge = CATEGORY_LABEL[opt.category];
 
       const card = this.add
-        .rectangle(cx, cy, CHOICE_CARD_W, CHOICE_CARD_H, 0x221b30)
+        .rectangle(cx, cy, CHOICE_CARD_W, CHOICE_CARD_H, 0x10182b)
         .setStrokeStyle(2, 0xc9973f)
         .setInteractive({ useHandCursor: true });
 
-      const badgeText = this.add
-        .text(cx, cy - 58, badge.text, {
-          fontFamily: FONT_FAMILY,
-          fontSize: '13px',
-          fontStyle: 'bold',
-          color: badge.color,
-        })
-        .setOrigin(0.5);
+      const badgeText = addPixelText(this, cx, cy - 74, badge.text, {
+        size: 24,
+        color: badge.color,
+        origin: 0.5,
+      });
 
-      const titleText = this.add
-        .text(cx, cy - 18, opt.title, {
-          fontFamily: FONT_FAMILY,
-          fontSize: '19px',
-          fontStyle: 'bold',
-          color: '#f2e3c6',
-          align: 'center',
-          wordWrap: { width: CHOICE_CARD_W - 24 },
-        })
-        .setOrigin(0.5);
+      const titleText = addPixelText(
+        this,
+        cx,
+        cy - 26,
+        wrapPixelText(opt.title, CHOICE_CARD_W - 24, 24),
+        {
+          size: 24,
+          color: PALETTE.paperWhite,
+          origin: 0.5,
+          align: 1,
+        },
+      );
 
-      const descText = this.add
-        .text(cx, cy + 36, opt.description, {
-          fontFamily: FONT_FAMILY,
-          fontSize: '14px',
-          color: '#d4cde0',
-          align: 'center',
-          wordWrap: { width: CHOICE_CARD_W - 28 },
-        })
-        .setOrigin(0.5);
+      const descText = addPixelText(
+        this,
+        cx,
+        cy + 44,
+        wrapPixelText(opt.description, CHOICE_CARD_W - 24, 24),
+        {
+          size: 24,
+          color: PALETTE.candleLight,
+          origin: 0.5,
+          align: 1,
+          lineSpacing: 6,
+        },
+      );
 
       card.on('pointerover', () => {
-        card.setFillStyle(0x312645);
+        card.setFillStyle(0x2e4a73);
         card.setStrokeStyle(2, 0xe8b34b);
       });
       card.on('pointerout', () => {
-        card.setFillStyle(0x221b30);
+        card.setFillStyle(0x10182b);
         card.setStrokeStyle(2, 0xc9973f);
       });
       card.on('pointerdown', () => {
@@ -844,7 +915,7 @@ export class GameScene extends Phaser.Scene {
 
   private updateHud(): void {
     const hpRatio = Phaser.Math.Clamp(this.stats.hp / this.stats.maxHp, 0, 1);
-    this.hpBarFill.width = 160 * hpRatio;
+    this.hpBarFill.width = 110 * hpRatio;
     this.hpText.setText(`HP ${Math.ceil(this.stats.hp)}/${this.stats.maxHp}`);
 
     this.timerText.setText(formatTime(this.timeLeft));
@@ -852,84 +923,110 @@ export class GameScene extends Phaser.Scene {
     this.levelText.setText(`Lv.${this.level}`);
     const needed = xpNeededForLevel(this.level);
     const xpRatio = Phaser.Math.Clamp(this.xp / needed, 0, 1);
-    this.xpBarFill.width = 132 * xpRatio;
+    this.xpBarFill.width = 120 * xpRatio;
     this.killsText.setText(`击杀 ${this.kills}`);
 
     const loadout = WEAPON_ORDER.filter((id) => Boolean(this.stats.weapons[id]))
       .map((id) => `${WEAPON_DEFS[id].name} Lv.${this.stats.weapons[id]!.level}`)
       .join(' · ');
     this.loadoutText.setText(loadout);
+    this.loadoutBg.width = Math.max(120, Math.round(this.loadoutText.width) + 18);
   }
 
   private renderWorld(): void {
     const g = this.worldGfx;
     g.clear();
 
-    // Lantern fire aura
+    // Lantern fire pixel ring
     const lantern = this.stats.weapons.lantern_fire;
     if (lantern && this.lanternActiveRemaining > 0) {
-      g.fillStyle(0xe86f3a, 0.16);
-      g.fillCircle(this.playerX, this.playerY, lantern.range);
-      g.lineStyle(2, 0xf0934b, 0.55);
-      g.strokeCircle(this.playerX, this.playerY, lantern.range);
+      const ringKey = Math.floor(this.lanternAnimTimer / 0.14) % 2 === 0
+        ? 'lantern_ring_1'
+        : 'lantern_ring_2';
+      this.lanternRingSprite
+        .setTexture(ringKey)
+        .setPosition(Math.round(this.playerX), Math.round(this.playerY))
+        .setDisplaySize(Math.round(lantern.range * 2), Math.round(lantern.range * 2))
+        .setVisible(true);
+    } else {
+      this.lanternRingSprite.setVisible(false);
     }
 
     // XP orbs
     for (const orb of this.orbs) {
-      g.fillStyle(0x56d4a0, 1);
-      g.fillCircle(orb.x, orb.y, ORB_RADIUS);
+      orb.sprite.setPosition(Math.round(orb.x), Math.round(orb.y));
     }
 
-    // Enemies ("纸人影")
+    // Enemies + crisp pixel HP bars
     for (const enemy of this.enemies) {
-      g.fillStyle(enemy.hitFlash > 0 ? 0xffffff : ENEMY_COLOR, 1);
-      g.fillCircle(enemy.x, enemy.y, ENEMY_RADIUS);
+      const baseKey = enemy.kind === 'lantern' ? 'enemy_lantern' : 'enemy_paper';
+      const texKey = enemy.hitFlash > 0 ? `${baseKey}_hit` : baseKey;
+      enemy.sprite
+        .setTexture(texKey)
+        .setPosition(Math.round(enemy.x), Math.round(enemy.y))
+        .setFlipX(this.playerX < enemy.x);
+
       if (enemy.hp < enemy.maxHp) {
-        const w = 18;
+        const w = 24;
         const ratio = Math.max(0, enemy.hp / enemy.maxHp);
-        g.fillStyle(0x2a2038, 1);
-        g.fillRect(enemy.x - w / 2, enemy.y - ENEMY_RADIUS - 6, w, 3);
-        g.fillStyle(0xe06c75, 1);
-        g.fillRect(enemy.x - w / 2, enemy.y - ENEMY_RADIUS - 6, w * ratio, 3);
+        const barX = Math.round(enemy.x - w / 2);
+        const barY = Math.round(enemy.y - 26);
+        g.fillStyle(0x10182b, 1);
+        g.fillRect(barX - 1, barY - 1, w + 2, 6);
+        g.fillStyle(0xb03a2e, 1);
+        g.fillRect(barX, barY, Math.max(1, Math.round(w * ratio)), 4);
       }
     }
 
-    // Player
-    g.fillStyle(this.playerHitFlash > 0 ? 0xff6b6b : PLAYER_COLOR, 1);
-    g.fillCircle(this.playerX, this.playerY, PLAYER_RADIUS);
-    g.lineStyle(2, 0xfff2cc, 0.9);
-    g.strokeCircle(this.playerX, this.playerY, PLAYER_RADIUS);
-
-    // Peach sword slash arcs
-    for (const slash of this.slashes) {
-      const alpha = (slash.timer / slash.maxTimer) * 0.5;
-      g.fillStyle(0xf5d06b, alpha);
-      g.slice(
-        slash.x,
-        slash.y,
-        slash.range,
-        slash.angle - slash.arcRad / 2,
-        slash.angle + slash.arcRad / 2,
-        false,
-      );
-      g.fillPath();
+    // Player sprite (standing vs 2-frame walk, facing direction, hit flash)
+    let playerTex = 'player_idle';
+    if (this.playerHitFlash > 0) {
+      playerTex = 'player_hit';
+    } else if (this.playerMoving) {
+      playerTex = Math.floor(this.playerWalkTimer / 0.125) % 2 === 0
+        ? 'player_walk_1'
+        : 'player_walk_2';
     }
+    this.playerSprite
+      .setTexture(playerTex)
+      .setPosition(Math.round(this.playerX), Math.round(this.playerY))
+      .setFlipX(this.playerFacingLeft);
 
     // Coin darts
     for (const dart of this.darts) {
-      g.fillStyle(0xf0b949, 1);
-      g.fillCircle(dart.x, dart.y, dart.radius);
-      g.fillStyle(0x14101c, 1);
-      g.fillRect(dart.x - 1.5, dart.y - 1.5, 3, 3);
+      dart.sprite.setPosition(Math.round(dart.x), Math.round(dart.y));
     }
 
-    // Pointer drag guide
-    if (this.isDragging && !this.isLevelUpOpen) {
-      g.lineStyle(2, 0xe8b34b, 0.35);
-      g.strokeCircle(this.dragOriginX, this.dragOriginY, 24);
-      g.lineBetween(this.dragOriginX, this.dragOriginY, this.dragCurrentX, this.dragCurrentY);
-      g.fillStyle(0xe8b34b, 0.45);
-      g.fillCircle(this.dragCurrentX, this.dragCurrentY, 8);
+    // Virtual joystick overlay (shown only while actively dragging)
+    const jg = this.joystickGfx;
+    jg.clear();
+    if (this.isDragging && !this.isLevelUpOpen && !this.ended) {
+      const joy = computeJoystickInput(
+        this.dragCurrentX - this.dragOriginX,
+        this.dragCurrentY - this.dragOriginY,
+      );
+      const ox = Math.round(this.dragOriginX);
+      const oy = Math.round(this.dragOriginY);
+      const kx = Math.round(this.dragOriginX + joy.knobOffsetX);
+      const ky = Math.round(this.dragOriginY + joy.knobOffsetY);
+
+      jg.lineStyle(4, 0x10182b, 1);
+      jg.strokeCircle(ox, oy, JOYSTICK_MAX_DISTANCE_PX);
+      jg.lineStyle(2, 0x8fa8c8, 1);
+      jg.strokeCircle(ox, oy, JOYSTICK_MAX_DISTANCE_PX);
+
+      jg.fillStyle(0x4e739e, 1);
+      jg.fillCircle(ox, oy, JOYSTICK_DEADZONE_PX);
+
+      jg.lineStyle(2, 0x4e739e, 1);
+      jg.lineBetween(ox, oy, kx, ky);
+
+      jg.fillStyle(0xe8b34b, 1);
+      jg.fillCircle(kx, ky, 14);
+      jg.lineStyle(2, 0x17120c, 1);
+      jg.strokeCircle(kx, ky, 14);
+      jg.fillStyle(0xfbf6e9, 1);
+      jg.fillCircle(kx - 3, ky - 3, 4);
     }
   }
 
@@ -939,6 +1036,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.ended = true;
     this.isDragging = false;
+    this.joystickGfx.clear();
     this.levelUpModal?.destroy(true);
     this.levelUpModal = null;
     this.isLevelUpOpen = false;

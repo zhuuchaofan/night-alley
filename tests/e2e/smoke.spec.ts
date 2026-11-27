@@ -3,7 +3,7 @@ import path from 'node:path';
 import { expect, Page, test } from '@playwright/test';
 import type { DebugState } from '../../src/game/debug.ts';
 
-const SCREENSHOT_DIR = path.resolve(process.cwd(), '../prototype-screenshots');
+const SCREENSHOT_DIR = path.resolve(process.cwd(), '../visuals-screenshots');
 
 function ensureScreenshotDir(): void {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
@@ -46,7 +46,7 @@ async function startGame(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene');
 }
 
-test.describe('Night Alley greybox prototype smoke', () => {
+test.describe('Night Alley pixel visuals & controls', () => {
   test.beforeEach(async ({ page }) => {
     ensureScreenshotDir();
     page.on('pageerror', (err) => {
@@ -80,6 +80,11 @@ test.describe('Night Alley greybox prototype smoke', () => {
     const after = await getDebugState(page);
     expect(after.playerX).toBeGreaterThan(before.playerX + 50);
 
+    await page.evaluate(() => {
+      window.__NIGHT_ALLEY_DEBUG__?.spawnEnemyNearPlayer();
+      window.__NIGHT_ALLEY_DEBUG__?.spawnEnemyNearPlayer();
+    });
+    await page.waitForTimeout(180);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'gameplay.png') });
   });
 
@@ -166,5 +171,29 @@ test.describe('Night Alley greybox prototype smoke', () => {
     expect(restarted.kills).toBe(0);
     expect(restarted.level).toBe(1);
     expect(restarted.timeLeft).toBeGreaterThan(170);
+  });
+
+  test('6. moves player proportionally in drag direction via virtual joystick', async ({
+    page,
+  }) => {
+    await startGame(page);
+    const before = await getDebugState(page);
+
+    const box = await page.locator('canvas').boundingBox();
+    expect(box).not.toBeNull();
+
+    const startX = box!.x + (300 / 960) * box!.width;
+    const startY = box!.y + (300 / 540) * box!.height;
+    const endX = box!.x + (360 / 960) * box!.width;
+    const endY = startY;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 6 });
+    await page.waitForTimeout(800);
+    await page.mouse.up();
+
+    const after = await getDebugState(page);
+    expect(after.playerX).toBeGreaterThan(before.playerX + 40);
   });
 });

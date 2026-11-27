@@ -132,6 +132,7 @@ export class TitleScene extends Phaser.Scene {
         levelUpChoices: [],
         bossSpawned: false,
         bossAlive: false,
+        bossDying: false,
         settlement: null,
       }),
       addXp: () => {},

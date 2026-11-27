@@ -24,7 +24,7 @@ export class GameOverScene extends Phaser.Scene {
   }
 
   create(): void {
-    const { won, survivedSeconds, kills, level, maxConcurrent } = this.settlement;
+    const { won, survivedSeconds, kills, level, maxConcurrent, winReason } = this.settlement;
 
     ensureGameTextures(this);
     buildNightAlleyBackdrop(this, 0);
@@ -34,7 +34,11 @@ export class GameOverScene extends Phaser.Scene {
       .setStrokeStyle(2, won ? 0xe8b34b : 0xb03a2e)
       .setDepth(10);
 
-    const heading = won ? '天亮了 · 守夜成功' : '倒在夜巷';
+    const heading = !won
+      ? '倒在夜巷'
+      : winReason === 'boss'
+        ? '心魔已除 · 守夜成功'
+        : '天亮了 · 守夜成功';
     addPixelText(this, ARENA_WIDTH / 2 + 2, 128 + 2, heading, {
       size: 48,
       color: PALETTE.inkBlack,
@@ -88,6 +92,7 @@ export class GameOverScene extends Phaser.Scene {
         levelUpChoices: [],
         bossSpawned: false,
         bossAlive: false,
+        bossDying: false,
         settlement: { ...this.settlement },
       }),
       addXp: () => {},

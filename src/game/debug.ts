@@ -6,6 +6,8 @@ export interface SettlementData {
   kills: number;
   level: number;
   maxConcurrent: number;
+  /** How a win was earned; absent on a loss. */
+  winReason?: 'dawn' | 'boss';
 }
 
 export interface DebugChoiceInfo {
@@ -83,6 +85,8 @@ export interface DebugState {
   levelUpChoices: DebugChoiceInfo[];
   bossSpawned: boolean;
   bossAlive: boolean;
+  /** Boss-death slow-motion cinematic in progress. */
+  bossDying: boolean;
   slashes?: DebugSlashInfo[];
   gameFeel?: DebugGameFeelInfo;
   settlement: SettlementData | null;

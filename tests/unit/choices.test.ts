@@ -120,6 +120,36 @@ describe('applyChoice', () => {
   });
 });
 
+describe('evolved upgrade card names', () => {
+  it('shows the evolved name on upgrade cards after evolution, base name before', () => {
+    for (const id of WEAPON_ORDER) {
+      const lv4 = createInitialPlayerStats();
+      lv4.weapons[id] = { ...createInitialWeapon(id), level: 4 };
+      const lv4Upgrades = buildChoicePool(lv4).filter(
+        (o) => o.category === 'weapon_upgrade' && o.weaponId === id,
+      );
+      expect(lv4Upgrades).toHaveLength(2);
+      for (const opt of lv4Upgrades) {
+        expect(opt.title.startsWith(`${WEAPON_DEFS[id].name} · `)).toBe(true);
+        expect(opt.description.startsWith(WEAPON_DEFS[id].name)).toBe(true);
+      }
+
+      const evolved = createInitialPlayerStats();
+      evolved.weapons[id] = { ...createInitialWeapon(id), level: 5, evolved: true };
+      const evolvedUpgrades = buildChoicePool(evolved).filter(
+        (o) => o.category === 'weapon_upgrade' && o.weaponId === id,
+      );
+      expect(evolvedUpgrades).toHaveLength(2);
+      const evoName = EVOLUTION_DEFS[id].name;
+      for (const opt of evolvedUpgrades) {
+        expect(opt.title.startsWith(`${evoName} · `)).toBe(true);
+        expect(opt.description.startsWith(evoName)).toBe(true);
+        expect(opt.title).not.toContain(WEAPON_DEFS[id].name);
+      }
+    }
+  });
+});
+
 describe('weapon evolution', () => {
   it('offers evolution card only at level >= 5 and replaces the 2 normal upgrades', () => {
     const lv4Stats = createInitialPlayerStats();

@@ -1,5 +1,6 @@
 import {
   createInitialWeapon,
+  displayWeaponName,
   EVOLUTION_DEFS,
   EVOLUTION_MIN_LEVEL,
   PlayerStats,
@@ -137,7 +138,17 @@ export function buildChoicePool(stats: PlayerStats): ChoiceOption[] {
           weaponId,
         });
       } else {
-        pool.push(...WEAPON_UPGRADE_OPTIONS[weaponId]);
+        // Upgrade cards show the weapon's current display name, so an
+        // evolved weapon reads 破魔法剑 · 锐利 instead of 桃木剑 · 锐利.
+        const displayName = displayWeaponName(owned);
+        const baseName = WEAPON_DEFS[weaponId].name;
+        pool.push(
+          ...WEAPON_UPGRADE_OPTIONS[weaponId].map((opt) => ({
+            ...opt,
+            title: opt.title.replace(baseName, displayName),
+            description: opt.description.replace(baseName, displayName),
+          })),
+        );
       }
     } else {
       pool.push({

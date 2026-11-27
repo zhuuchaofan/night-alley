@@ -22,6 +22,7 @@ import {
   DAMAGE_NUMBER_MARGIN_X,
   DAMAGE_NUMBER_MAX_MERGED_LIFE,
   DAMAGE_NUMBER_MERGE_WINDOW,
+  deathBurstSpec,
   decayKnockbackOffset,
   ENEMY_RENDER_HALF_WIDTH,
   formatDamageNumber,
@@ -224,5 +225,28 @@ describe('gameFeel helpers', () => {
     expect(cornerOrb.x).toBeLessThanOrEqual(ARENA_WIDTH - PLAYER_RADIUS);
     expect(cornerOrb.y).toBeGreaterThanOrEqual(HUD_HEIGHT + PLAYER_RADIUS);
     expect(cornerOrb.y).toBeLessThanOrEqual(ARENA_HEIGHT - PLAYER_RADIUS);
+  });
+});
+
+describe('deathBurstSpec', () => {
+  it('boss shatters bigger, chunkier and longer than a normal kill; every kind tumbles', () => {
+    const boss = deathBurstSpec('boss');
+    const elite = deathBurstSpec('elite');
+    const normal = deathBurstSpec('paper');
+
+    expect(boss.count).toBe(18);
+    expect(boss.size).toBeGreaterThan(normal.size);
+    expect(boss.lifetimeMin).toBeGreaterThanOrEqual(0.45);
+    expect(boss.lifetimeMin).toBeGreaterThan(normal.lifetimeMax);
+    expect(elite.count).toBe(12);
+    expect(elite.count).toBeGreaterThan(normal.count);
+    expect(elite.count).toBeLessThan(boss.count);
+    expect(normal.count).toBe(7);
+
+    for (const spec of [boss, elite, normal, deathBurstSpec('swift'), deathBurstSpec('shooter'), deathBurstSpec('lantern')]) {
+      expect(spec.spinMax).toBeGreaterThan(0);
+      expect(spec.speedMax).toBeGreaterThan(spec.speedMin);
+      expect(spec.lifetimeMax).toBeGreaterThan(spec.lifetimeMin);
+    }
   });
 });

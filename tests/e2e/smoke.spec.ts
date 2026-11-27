@@ -88,6 +88,9 @@ test.describe('Night Alley pixel visuals & controls', () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'levelup.png') });
 
     const firstChoice = modalState.levelUpChoices[0];
+    // The modal ignores clicks for the first 400ms (mis-tap guard), so
+    // wait the grace period out before clicking.
+    await page.waitForTimeout(500);
     await clickLogical(page, firstChoice.x, firstChoice.y);
 
     await page.waitForFunction(
@@ -98,6 +101,49 @@ test.describe('Night Alley pixel visuals & controls', () => {
     await page.waitForTimeout(600);
     const t2 = (await getDebugState(page)).timeLeft;
     expect(t2).toBeLessThan(t1);
+  });
+
+  test('4b. level-up modal ignores clicks for the first 400ms (mis-tap guard)', async ({
+    page,
+  }) => {
+    await startGame(page);
+
+    await page.evaluate(() => {
+      window.__NIGHT_ALLEY_DEBUG__?.addXp(50);
+    });
+
+    // Fetch the first choice in the same round-trip that observes the
+    // modal, so a slow runner cannot eat the 400ms grace period before
+    // the first click lands.
+    const firstChoiceHandle = await page.waitForFunction(
+      () => {
+        const s = window.__NIGHT_ALLEY_DEBUG__?.getState();
+        return s && s.isLevelUpOpen ? s.levelUpChoices[0] : null;
+      },
+      undefined,
+      { timeout: 10000 },
+    );
+    const firstChoice = (await firstChoiceHandle.jsonValue()) as {
+      x: number;
+      y: number;
+    } | null;
+    expect(firstChoice).not.toBeNull();
+    if (!firstChoice) {
+      throw new Error('No level-up choice appeared');
+    }
+
+    // Click immediately after the modal opens: inside the 400ms grace
+    // period, so the choice must NOT be picked.
+    await clickLogical(page, firstChoice.x, firstChoice.y);
+    await page.waitForTimeout(200);
+    expect((await getDebugState(page)).isLevelUpOpen).toBe(true);
+
+    // After the grace period the same click goes through.
+    await page.waitForTimeout(500);
+    await clickLogical(page, firstChoice.x, firstChoice.y);
+    await page.waitForFunction(
+      () => window.__NIGHT_ALLEY_DEBUG__?.getState().isLevelUpOpen === false,
+    );
   });
 
   test('5. settlement appears when timer ends and Restart returns to fresh GameScene', async ({

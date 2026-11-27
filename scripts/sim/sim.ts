@@ -37,7 +37,6 @@ import {
   ARENA_WIDTH,
   BOSS_SPAWN_ELAPSED_SECONDS,
   BOSS_STATS,
-  BOSS_XP_ORBS,
   createInitialPlayerStats,
   ELITE_XP_ORBS,
   enemyStatsForKind,
@@ -115,6 +114,8 @@ export interface SimConfig {
 
 export interface RunResult {
   won: boolean;
+  /** 'dawn' for surviving to 03:00, 'boss' for killing the boss, null on a loss. */
+  winReason: 'dawn' | 'boss' | null;
   survivedSeconds: number;
   kills: number;
   killsByKind: Record<EnemyKind, number>;
@@ -140,6 +141,8 @@ export interface SimSummary {
   runs: number;
   seed: number;
   winRate: number;
+  bossKillWinRate: number;
+  dawnWinRate: number;
   avgSurvivedSeconds: number;
   avgKills: number;
   killShareByKind: Record<EnemyKind, number>;
@@ -320,20 +323,20 @@ export function runSingleSim(seed: number): RunResult {
   };
 
   const damageEnemyAt = (index: number, damage: number): void => {
+    // A boss kill ends the run inside this call (the game sets bossDying
+    // and settles after the cinematic); later hits in the same weapon or
+    // dart update must not count extra kills or spawn orbs after it.
+    if (bossKilled) {
+      return;
+    }
     const enemy = enemies[index];
     enemy.hp -= damage;
     if (enemy.hp <= 0) {
       killsByKind[enemy.kind] += 1;
       if (enemy.kind === 'boss') {
+        // Boss kill ends the run immediately (mirrors the game): no XP
+        // orbs are dropped, the run is over at this hit.
         bossKilled = true;
-        for (let k = 0; k < BOSS_XP_ORBS; k += 1) {
-          const angle = (k / BOSS_XP_ORBS) * Math.PI * 2 + rng() * 0.25;
-          const dist = 10 + rng() * 32;
-          orbs.push({
-            x: clamp(enemy.x + Math.cos(angle) * dist, PLAY_MIN_X, PLAY_MAX_X),
-            y: clamp(enemy.y + Math.sin(angle) * dist, PLAY_MIN_Y, PLAY_MAX_Y),
-          });
-        }
       } else if (enemy.kind === 'elite') {
         for (let k = 0; k < ELITE_XP_ORBS; k += 1) {
           orbs.push({ x: enemy.x, y: enemy.y });
@@ -886,12 +889,40 @@ export function runSingleSim(seed: number): RunResult {
   const getEvolvedWeapons = (): WeaponId[] =>
     WEAPON_ORDER.filter((id) => Boolean(stats.weapons[id]?.evolved));
 
+  // Boss kill ends the run immediately as a win (mirrors the game):
+  // nothing after the lethal hit (darts, orbs, XP) is recorded, and the
+  // remaining trajectory points hold the final HP.
+  const bossWin = (stepAtKill: number, elapsedAtKill: number): RunResult => {
+    const slot = Math.floor(stepAtKill / TRAJECTORY_STEP_INTERVAL);
+    if (stepAtKill % TRAJECTORY_STEP_INTERVAL === 0) {
+      hpTrajectory[slot] = stats.hp;
+    }
+    for (let t = slot + 1; t < TRAJECTORY_POINTS; t += 1) {
+      hpTrajectory[t] = stats.hp;
+    }
+    return {
+      won: true,
+      winReason: 'boss',
+      survivedSeconds: elapsedAtKill,
+      kills,
+      killsByKind,
+      eliteSpawned,
+      level,
+      maxConcurrent,
+      bossSpawned,
+      bossKilled,
+      evolved: getEvolvedWeapons(),
+      hpTrajectory,
+    };
+  };
+
   for (let step = 1; step <= SIM_TOTAL_STEPS; step += 1) {
     const elapsedSeconds = step * SIM_DT;
     if (step === SIM_TOTAL_STEPS) {
       hpTrajectory[TRAJECTORY_POINTS - 1] = stats.hp;
       return {
         won: true,
+        winReason: 'dawn',
         survivedSeconds: ROUND_DURATION_SECONDS,
         kills,
         killsByKind,
@@ -910,6 +941,7 @@ export function runSingleSim(seed: number): RunResult {
     if (!updateEnemies(SIM_DT) || !updateEnemyBolts(SIM_DT)) {
       return {
         won: false,
+        winReason: null,
         survivedSeconds: elapsedSeconds,
         kills,
         killsByKind,
@@ -923,7 +955,13 @@ export function runSingleSim(seed: number): RunResult {
       };
     }
     updateWeapons(SIM_DT);
+    if (bossKilled) {
+      return bossWin(step, elapsedSeconds);
+    }
     updateDarts(SIM_DT);
+    if (bossKilled) {
+      return bossWin(step, elapsedSeconds);
+    }
     updateOrbs(SIM_DT);
 
     if (step % TRAJECTORY_STEP_INTERVAL === 0) {
@@ -933,6 +971,7 @@ export function runSingleSim(seed: number): RunResult {
 
   return {
     won: true,
+    winReason: 'dawn',
     survivedSeconds: ROUND_DURATION_SECONDS,
     kills,
     killsByKind,
@@ -953,6 +992,8 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
 
   const results: RunResult[] = [];
   let wins = 0;
+  let bossKillWins = 0;
+  let dawnWins = 0;
   let totalSurvived = 0;
   let totalKills = 0;
   const totalKillsByKind = createEmptyKillsByKind();
@@ -983,6 +1024,8 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
     results.push(res);
 
     if (res.won) wins += 1;
+    if (res.winReason === 'boss') bossKillWins += 1;
+    if (res.winReason === 'dawn') dawnWins += 1;
     if (res.bossSpawned) bossSpawnedCount += 1;
     if (res.bossKilled) bossKilledCount += 1;
     for (const kind of ENEMY_KINDS) {
@@ -1027,6 +1070,8 @@ export function runSimBatch(config: Partial<SimConfig> = {}): SimSummary {
     runs,
     seed,
     winRate: pct(wins),
+    bossKillWinRate: pct(bossKillWins),
+    dawnWinRate: pct(dawnWins),
     avgSurvivedSeconds: runs > 0 ? totalSurvived / runs : 0,
     avgKills: runs > 0 ? totalKills / runs : 0,
     killShareByKind,
@@ -1063,6 +1108,9 @@ export function formatSimSummary(summary: SimSummary): string {
   lines.push('| --- | --- |');
   lines.push(`| Runs | ${summary.runs} |`);
   lines.push(`| Win Rate | ${summary.winRate.toFixed(1)}% |`);
+  lines.push(
+    `| Win Split | Boss-kill ${summary.bossKillWinRate.toFixed(1)}% / Dawn ${summary.dawnWinRate.toFixed(1)}% |`,
+  );
   lines.push(`| Avg Survived (s) | ${summary.avgSurvivedSeconds.toFixed(2)} |`);
   lines.push(`| Avg Kills | ${summary.avgKills.toFixed(2)} |`);
   lines.push(`| Elite Spawn Rate | ${summary.eliteSpawnRate.toFixed(2)} / run |`);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createInitialPlayerStats,
   createInitialWeapon,
+  EVOLUTION_DEFS,
   EVOLUTION_MIN_LEVEL,
   WEAPON_DEFS,
   WEAPON_ORDER,
@@ -19,17 +20,24 @@ function collectAllGameUiStrings(): string[] {
   const start = createInitialPlayerStats();
   const full = createInitialPlayerStats();
   const readyToEvolve = createInitialPlayerStats();
+  const evolved = createInitialPlayerStats();
   for (const id of WEAPON_ORDER) {
     full.weapons[id] = createInitialWeapon(id);
     readyToEvolve.weapons[id] = {
       ...createInitialWeapon(id),
       level: EVOLUTION_MIN_LEVEL,
     };
+    evolved.weapons[id] = {
+      ...createInitialWeapon(id),
+      level: EVOLUTION_MIN_LEVEL,
+      evolved: true,
+    };
   }
   const choices = [
     ...buildChoicePool(start),
     ...buildChoicePool(full),
     ...buildChoicePool(readyToEvolve),
+    ...buildChoicePool(evolved),
   ];
 
   return [
@@ -47,6 +55,8 @@ function collectAllGameUiStrings(): string[] {
     '击杀 0',
     '大心魔现身',
     ...WEAPON_ORDER.map((id) => `${WEAPON_DEFS[id].name} Lv.1`),
+    // Evolution banner (one per evolved weapon)
+    ...WEAPON_ORDER.map((id) => `武器进化 · ${EVOLUTION_DEFS[id].name}`),
     // Level-up modal
     '升至 Lv.2 · 三选一',
     '点击一项强化以继续守夜',
@@ -57,6 +67,7 @@ function collectAllGameUiStrings(): string[] {
     ...choices.flatMap((c) => [c.title, c.description]),
     // GameOverScene
     '天亮了 · 守夜成功',
+    '心魔已除 · 守夜成功',
     '倒在夜巷',
     '存活时间：03:00',
     '杀敌数：0',

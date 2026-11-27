@@ -85,9 +85,9 @@ const WEAPON_UPGRADE_OPTIONS: Record<WeaponId, ChoiceOption[]> = {
 };
 
 const EVOLUTION_DESC: Record<WeaponId, string> = {
-  peach_sword: '进化：伤害 ×2，挥砍弧形 +40',
-  coin_dart: '进化：数量 +2，伤害 ×1.5',
-  lantern_fire: '进化：伤害 ×2，范围 ×1.5',
+  peach_sword: '进化：伤害 ×2，\n挥砍弧形 +40',
+  coin_dart: '进化：数量 +2，\n伤害 ×1.5',
+  lantern_fire: '进化：伤害 ×2，\n范围 ×1.5',
 };
 
 const STAT_OPTIONS: ChoiceOption[] = [

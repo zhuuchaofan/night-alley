@@ -1068,7 +1068,11 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
-      if (dist <= this.stats.pickupRadius) {
+      // Magnet pull only runs after the scatter ends: while the orb is
+      // scattering, pulling it can snap it exactly onto the player
+      // (dist === 0), and the next frame's dx / dist becomes 0 / 0 = NaN,
+      // freezing the orb forever (no XP, no level-ups — live regression).
+      if (orb.scatterTimer <= 0 && dist <= this.stats.pickupRadius) {
         const step = Math.min(dist, ORB_PULL_SPEED * dt);
         orb.x += (dx / dist) * step;
         orb.y += (dy / dist) * step;

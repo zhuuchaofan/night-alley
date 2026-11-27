@@ -373,4 +373,81 @@ test.describe('Night Alley game feel (stage 2)', () => {
     expect(observed.maxVisualOffset).toBeGreaterThan(2);
     expect(xpAfterWalkBack).toBeGreaterThanOrEqual(1);
   });
+
+  test('18. close-range kills grant XP and open the level-up modal', async ({ page }) => {
+    await startGame(page);
+
+    // Regression test for the live stage-3 bug: after the scatter fix gated
+    // collection on scatterTimer, the magnet pull could snap an orb exactly
+    // onto the standing player (dist === 0) and the next frame's dx / dist
+    // became 0 / 0 = NaN, freezing every orb forever — kills piled up, XP
+    // stayed 0, no level-ups ever opened. Real kills only, no addXp.
+    // Note: this test does NOT assert the level-up modal opens — a
+    // stationary player strands orbs that land beyond the 60px magnet
+    // radius, so reaching 8 XP from one spot is luck, not a guarantee.
+    // The modal itself is covered by test 4 (xp threshold opens it) and by
+    // real play; this test pins the NaN freeze and the XP flow.
+    const observed = await page.evaluate(
+      () =>
+        new Promise<{
+          kills: number;
+          maxXp: number;
+          maxLevel: number;
+          everLevelUpOpen: boolean;
+          sawNaNOrb: boolean;
+        }>(
+          (resolve) => {
+            const dbg = window.__NIGHT_ALLEY_DEBUG__;
+            if (!dbg) throw new Error('Missing __NIGHT_ALLEY_DEBUG__');
+            const startedAt = performance.now();
+            let maxKills = 0;
+            let maxXp = 0;
+            let maxLevel = 1;
+            let everLevelUpOpen = false;
+            let sawNaNOrb = false;
+            let lastSpawn = 0;
+            let lastHeal = 0;
+            const step = (): void => {
+              const now = performance.now();
+              const t = (now - startedAt) / 1000;
+              if (now - lastSpawn > 1200) {
+                dbg.spawnEnemyNearPlayer();
+                dbg.spawnEnemyNearPlayer();
+                lastSpawn = now;
+              }
+              // Keep the stationary player alive: contact damage would kill
+              // it before 8 kills otherwise. The XP chain is what's under
+              // test, not survival.
+              if (now - lastHeal > 2000) {
+                dbg.setHp(30);
+                lastHeal = now;
+              }
+              const state = dbg.getState();
+              maxKills = Math.max(maxKills, state.kills);
+              maxXp = Math.max(maxXp, state.xp);
+              maxLevel = Math.max(maxLevel, state.level);
+              everLevelUpOpen = everLevelUpOpen || state.isLevelUpOpen;
+              // Direct regression signal: a frozen orb has NaN coordinates.
+              if (
+                state.gameFeel?.orbs.some(
+                  (o: { x: number; y: number }) => !Number.isFinite(o.x) || !Number.isFinite(o.y),
+                )
+              ) {
+                sawNaNOrb = true;
+              }
+              if ((maxKills >= 8 && maxXp > 0) || t > 40) {
+                resolve({ kills: maxKills, maxXp, maxLevel, everLevelUpOpen, sawNaNOrb });
+                return;
+              }
+              requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+          },
+        ),
+    );
+
+    expect(observed.kills).toBeGreaterThanOrEqual(8);
+    expect(observed.maxXp).toBeGreaterThan(0);
+    expect(observed.sawNaNOrb).toBe(false);
+  });
 });

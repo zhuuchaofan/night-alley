@@ -93,6 +93,8 @@ export class GameOverScene extends Phaser.Scene {
         bossSpawned: false,
         bossAlive: false,
         bossDying: false,
+        bossKillKills: null,
+        bossKillMaxConcurrent: null,
         settlement: { ...this.settlement },
       }),
       addXp: () => {},

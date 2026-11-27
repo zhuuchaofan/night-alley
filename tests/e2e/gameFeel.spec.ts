@@ -382,11 +382,20 @@ test.describe('Night Alley game feel (stage 2)', () => {
     // onto the standing player (dist === 0) and the next frame's dx / dist
     // became 0 / 0 = NaN, freezing every orb forever — kills piled up, XP
     // stayed 0, no level-ups ever opened. Real kills only, no addXp.
-    // Note: this test does NOT assert the level-up modal opens — a
+    // Note: this test does NOT require the level-up modal to open — a
     // stationary player strands orbs that land beyond the 60px magnet
     // radius, so reaching 8 XP from one spot is luck, not a guarantee.
     // The modal itself is covered by test 4 (xp threshold opens it) and by
     // real play; this test pins the NaN freeze and the XP flow.
+    // Two races found 2026-11-27 (probe timeline, not load jitter):
+    // (1) a stationary player is a death race — spawns (~2.5/s with the
+    // natural spawner) outrun the sword (~1 kill/s), the pile's contact
+    // dps outruns a 2s heal cadence, and the player dies around 7s with
+    // 6 kills, freezing everything; (2) an elite's 3 orbs can push XP to
+    // the 8 threshold before the 8th kill, the modal opens, the game
+    // pauses, and the kill count freezes below 8. Both are correct game
+    // behavior; the test heals every 500ms and also resolves when the
+    // modal opens, since an open modal IS the XP-flow proof.
     const observed = await page.evaluate(
       () =>
         new Promise<{
@@ -417,8 +426,10 @@ test.describe('Night Alley game feel (stage 2)', () => {
               }
               // Keep the stationary player alive: contact damage would kill
               // it before 8 kills otherwise. The XP chain is what's under
-              // test, not survival.
-              if (now - lastHeal > 2000) {
+              // test, not survival. 500ms cadence: a ~12-enemy pile deals
+              // ~7 dps, a 65-enemy cap pile ~37 dps, both under 30 HP per
+              // 500ms window; the old 2s cadence lost the race ~25% of runs.
+              if (now - lastHeal > 500) {
                 dbg.setHp(30);
                 lastHeal = now;
               }
@@ -435,7 +446,7 @@ test.describe('Night Alley game feel (stage 2)', () => {
               ) {
                 sawNaNOrb = true;
               }
-              if ((maxKills >= 8 && maxXp > 0) || t > 40) {
+              if ((maxKills >= 8 && maxXp > 0) || everLevelUpOpen || t > 40) {
                 resolve({ kills: maxKills, maxXp, maxLevel, everLevelUpOpen, sawNaNOrb });
                 return;
               }
@@ -446,7 +457,11 @@ test.describe('Night Alley game feel (stage 2)', () => {
         ),
     );
 
-    expect(observed.kills).toBeGreaterThanOrEqual(8);
+    // Either 8 close-range kills landed, or a level-up opened: an elite's
+    // 3 orbs can reach the 8-XP threshold before the 8th kill, and the open
+    // modal pauses the game, freezing the kill count — the open modal is
+    // itself proof the XP flowed.
+    expect(observed.kills >= 8 || observed.everLevelUpOpen).toBe(true);
     expect(observed.maxXp).toBeGreaterThan(0);
     expect(observed.sawNaNOrb).toBe(false);
   });

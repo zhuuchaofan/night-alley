@@ -133,6 +133,8 @@ export class TitleScene extends Phaser.Scene {
         bossSpawned: false,
         bossAlive: false,
         bossDying: false,
+        bossKillKills: null,
+        bossKillMaxConcurrent: null,
         settlement: null,
       }),
       addXp: () => {},

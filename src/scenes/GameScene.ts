@@ -252,6 +252,9 @@ export class GameScene extends Phaser.Scene {
   /** Boss-death cinematic in progress: world runs in slow motion, win settles after it. */
   private bossDying = false;
   private bossDeathTimer = 0;
+  /** Settlement counters frozen at the lethal boss hit (see debug.ts). */
+  private bossKillKills: number | null = null;
+  private bossKillMaxConcurrent: number | null = null;
   private bossBanner: Phaser.GameObjects.Container | null = null;
   private bossBannerTimer = 0;
   private bannerKind: 'boss' | 'evolution' | null = null;
@@ -357,6 +360,8 @@ export class GameScene extends Phaser.Scene {
     this.bossSpawned = false;
     this.bossDying = false;
     this.bossDeathTimer = 0;
+    this.bossKillKills = null;
+    this.bossKillMaxConcurrent = null;
     this.bossBanner = null;
     this.bossBannerTimer = 0;
     this.bannerKind = null;
@@ -562,6 +567,8 @@ export class GameScene extends Phaser.Scene {
           bossSpawned: this.bossSpawned,
           bossAlive: this.enemies.some((enemy) => enemy.kind === 'boss'),
           bossDying: this.bossDying,
+          bossKillKills: this.bossKillKills,
+          bossKillMaxConcurrent: this.bossKillMaxConcurrent,
           slashes: this.slashes.map((slash) => ({
             x: Math.round(slash.sprite.x * 100) / 100,
             y: Math.round(slash.sprite.y * 100) / 100,
@@ -897,6 +904,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateSpawning(dt: number): void {
+    // No spawns during the boss-death cinematic: the run is already won,
+    // and a spawn would raise maxConcurrent after the settlement counters
+    // froze at the lethal hit.
+    if (this.bossDying) {
+      return;
+    }
     this.checkBossSpawn();
 
     this.spawnTimer -= dt;
@@ -1507,7 +1520,10 @@ export class GameScene extends Phaser.Scene {
     // settlement), but the sword/lantern loops and the dart update may
     // still be iterating — without this guard they would keep killing
     // after settlement and the settlement would undercount.
-    if (this.ended) {
+    // The bossDying half covers the death cinematic: the lethal hit
+    // decides the run, so no damage after it may move the settlement
+    // counters (kills / maxConcurrent) while the round timer is frozen.
+    if (this.ended || this.bossDying) {
       return;
     }
     const enemy = this.enemies[index];
@@ -1541,6 +1557,11 @@ export class GameScene extends Phaser.Scene {
         this.kills += 1;
         this.bossDying = true;
         this.bossDeathTimer = 0;
+        // Freeze the settlement counters at the lethal hit (Codex round-3
+        // Block): the round timer stops here, so the win settlement must
+        // report exactly these values.
+        this.bossKillKills = this.kills;
+        this.bossKillMaxConcurrent = this.maxConcurrent;
         return;
       }
       if (enemy.kind === 'elite') {

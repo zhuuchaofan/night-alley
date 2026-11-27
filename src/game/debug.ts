@@ -87,6 +87,14 @@ export interface DebugState {
   bossAlive: boolean;
   /** Boss-death slow-motion cinematic in progress. */
   bossDying: boolean;
+  /**
+   * Settlement counters frozen at the lethal boss hit (null until a boss
+   * kill). The round timer stops when the boss starts dying, so the win
+   * settlement must report exactly these values; anything higher means a
+   * post-lethal kill or spawn leaked in (Codex round-3 Block).
+   */
+  bossKillKills: number | null;
+  bossKillMaxConcurrent: number | null;
   slashes?: DebugSlashInfo[];
   gameFeel?: DebugGameFeelInfo;
   settlement: SettlementData | null;

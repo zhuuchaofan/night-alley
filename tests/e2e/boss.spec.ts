@@ -131,6 +131,10 @@ test.describe('Night Alley final boss', () => {
     const deadline = Date.now() + 160000;
     let sawBossDying = false;
     let cinematicShot = false;
+    // Lethal-hit snapshot (frozen inside damageEnemyAt, not polled): the
+    // settlement must match these exactly.
+    let snapshotKills: number | null = null;
+    let snapshotMaxConcurrent: number | null = null;
     while (Date.now() < deadline) {
       const state = await getDebugState(page);
       if (state.scene === 'GameOverScene') {
@@ -138,6 +142,14 @@ test.describe('Night Alley final boss', () => {
       }
       if (state.bossDying) {
         sawBossDying = true;
+        // Snapshot the lethal-hit counters. Polling state.kills here would
+        // be too late: same-update kills after the boss land in the same
+        // frame, before any poll observes bossDying — only the snapshot
+        // taken inside damageEnemyAt predates them.
+        if (snapshotKills === null) {
+          snapshotKills = state.bossKillKills;
+          snapshotMaxConcurrent = state.bossKillMaxConcurrent;
+        }
         if (!cinematicShot) {
           cinematicShot = true;
           // Capture the slow-motion shatter mid-cinematic.
@@ -178,5 +190,15 @@ test.describe('Night Alley final boss', () => {
     // The boss death runs a 1.4s slow-motion shatter before the win
     // settles; the loop must have observed that cinematic state.
     expect(sawBossDying).toBe(true);
+    // Settlement counters freeze at the lethal hit: the round timer stops
+    // when the boss starts dying, so kills / maxConcurrent recorded after
+    // that moment would report activity the survived time never covered.
+    // (Codex round-3 Block: same-update sword/lantern/dart kills and
+    // cinematic spawns used to leak in.) The damage guard (damageEnemyAt
+    // returns while bossDying) and the spawn guard (updateSpawning returns
+    // while bossDying) freeze both counters.
+    expect(snapshotKills).not.toBeNull();
+    expect(overState.settlement!.kills).toBe(snapshotKills);
+    expect(overState.settlement!.maxConcurrent).toBe(snapshotMaxConcurrent);
   });
 });

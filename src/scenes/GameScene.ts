@@ -32,12 +32,35 @@ import {
   JoystickDimensions,
 } from '../game/joystick.ts';
 import { addPixelText, wrapPixelText } from '../game/pixelFont.ts';
+import {
+  applyKnockbackImpulse,
+  canMergeDamageNumber,
+  computeClampedRenderPos,
+  computeDamageNumberAlpha,
+  computeOrbScatterVelocity,
+  computeSwingPose,
+  DAMAGE_NUMBER_DURATION,
+  DAMAGE_NUMBER_RISE_SPEED,
+  decayKnockbackOffset,
+  ENEMY_HIT_FLASH_DURATION,
+  formatDamageNumber,
+  MAX_BURST_PARTICLES,
+  MAX_DAMAGE_NUMBERS,
+  OrbScatterVelocity,
+  PLAYER_HIT_FLASH_DURATION,
+  PLAYER_SCREEN_FLASH_DURATION,
+  PLAYER_SCREEN_FLASH_MAX_ALPHA,
+  PLAYER_SHAKE_DURATION_MS,
+  PLAYER_SHAKE_INTENSITY,
+  SWING_ANIM_DURATION,
+} from '../game/gameFeel.ts';
 import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
 import { computeSlashPlacement } from '../game/slash.ts';
 
 type EnemyKind = 'paper' | 'lantern' | 'boss';
 
 interface EnemyEntity {
+  id: number;
   kind: EnemyKind;
   x: number;
   y: number;
@@ -49,13 +72,44 @@ interface EnemyEntity {
   attackCooldown: number;
   attackCooldownRemaining: number;
   hitFlash: number;
+  knockbackOffsetX: number;
+  knockbackOffsetY: number;
   sprite: Phaser.GameObjects.Image;
 }
 
 interface OrbEntity {
   x: number;
   y: number;
+  scatterVx: number;
+  scatterVy: number;
+  scatterTimer: number;
+  scatterMaxTimer: number;
+  hopPeak: number;
   sprite: Phaser.GameObjects.Image;
+}
+
+interface DamageNumberEntity {
+  enemyId: number;
+  amount: number;
+  x: number;
+  y: number;
+  timer: number;
+  maxTimer: number;
+  sinceLastHit: number;
+  totalLife: number;
+  text: Phaser.GameObjects.BitmapText;
+  shadowText: Phaser.GameObjects.BitmapText;
+}
+
+interface BurstParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  color: number;
+  timer: number;
+  maxTimer: number;
 }
 
 interface DartEntity {
@@ -113,6 +167,9 @@ export class GameScene extends Phaser.Scene {
   private playerX = ARENA_WIDTH / 2;
   private playerY = (ARENA_HEIGHT + HUD_HEIGHT) / 2;
   private playerHitFlash = 0;
+  private playerScreenFlash = 0;
+  private playerSwingTimer = 0;
+  private playerSwingAngle = 0;
   private playerFacingLeft = false;
   private playerWalkTimer = 0;
   private playerMoving = false;
@@ -124,12 +181,16 @@ export class GameScene extends Phaser.Scene {
   private timeLeft = ROUND_DURATION_SECONDS;
   private maxConcurrent = 0;
   private enemySpawnCount = 0;
+  private nextEnemyId = 1;
+  private damageNumberCounter = 0;
   private ended = false;
 
   private enemies: EnemyEntity[] = [];
   private orbs: OrbEntity[] = [];
   private darts: DartEntity[] = [];
   private slashes: SlashEffect[] = [];
+  private damageNumbers: DamageNumberEntity[] = [];
+  private burstParticles: BurstParticle[] = [];
 
   private spawnTimer = 0.4;
   private swordCooldown = 0;
@@ -161,6 +222,7 @@ export class GameScene extends Phaser.Scene {
   private joystickGfx!: Phaser.GameObjects.Graphics;
   private playerSprite!: Phaser.GameObjects.Image;
   private lanternRingSprite!: Phaser.GameObjects.Image;
+  private playerDamageFlashRect!: Phaser.GameObjects.Rectangle;
 
   private hpBarFill!: Phaser.GameObjects.Rectangle;
   private hpText!: Phaser.GameObjects.BitmapText;
@@ -189,6 +251,17 @@ export class GameScene extends Phaser.Scene {
       .setDepth(10);
 
     this.worldGfx = this.add.graphics().setDepth(13);
+    this.playerDamageFlashRect = this.add
+      .rectangle(
+        ARENA_WIDTH / 2,
+        (HUD_HEIGHT + ARENA_HEIGHT) / 2,
+        ARENA_WIDTH,
+        ARENA_HEIGHT - HUD_HEIGHT,
+        0xb03a2e,
+        1,
+      )
+      .setAlpha(0)
+      .setDepth(18);
     this.joystickGfx = this.add.graphics().setDepth(25);
     this.createHud();
     this.setupInputs();
@@ -202,6 +275,9 @@ export class GameScene extends Phaser.Scene {
     this.playerX = ARENA_WIDTH / 2;
     this.playerY = (ARENA_HEIGHT + HUD_HEIGHT) / 2;
     this.playerHitFlash = 0;
+    this.playerScreenFlash = 0;
+    this.playerSwingTimer = 0;
+    this.playerSwingAngle = 0;
     this.playerFacingLeft = false;
     this.playerWalkTimer = 0;
     this.playerMoving = false;
@@ -213,12 +289,16 @@ export class GameScene extends Phaser.Scene {
     this.timeLeft = ROUND_DURATION_SECONDS;
     this.maxConcurrent = 0;
     this.enemySpawnCount = 0;
+    this.nextEnemyId = 1;
+    this.damageNumberCounter = 0;
     this.ended = false;
 
     this.enemies = [];
     this.orbs = [];
     this.darts = [];
     this.slashes = [];
+    this.damageNumbers = [];
+    this.burstParticles = [];
 
     this.spawnTimer = 0.4;
     this.swordCooldown = 0;
@@ -427,6 +507,39 @@ export class GameScene extends Phaser.Scene {
           displayWidth: Math.round(slash.sprite.displayWidth * 100) / 100,
           displayHeight: Math.round(slash.sprite.displayHeight * 100) / 100,
         })),
+        gameFeel: {
+          playerTexture: this.playerSprite?.texture.key ?? 'player_idle',
+          playerSwinging: this.playerSwingTimer > 0,
+          playerSwingAngle: Math.round(this.playerSwingAngle * 10000) / 10000,
+          playerScreenFlash: Math.round(this.playerScreenFlash * 1000) / 1000,
+          damageNumbers: this.damageNumbers.map((dn) => ({
+            text: dn.text.text,
+            x: Math.round(dn.x * 100) / 100,
+            y: Math.round(dn.y * 100) / 100,
+            alpha: Math.round(dn.text.alpha * 1000) / 1000,
+          })),
+          burstParticles: this.burstParticles.length,
+          scatteringOrbs: this.orbs.filter((orb) => orb.scatterTimer > 0).length,
+          enemies: this.enemies.map((enemy) => {
+            const renderPos = computeClampedRenderPos(
+              enemy.x,
+              enemy.y,
+              enemy.knockbackOffsetX,
+              enemy.knockbackOffsetY,
+              enemy.radius,
+            );
+            return {
+              id: enemy.id,
+              x: Math.round(enemy.x * 100) / 100,
+              y: Math.round(enemy.y * 100) / 100,
+              renderX: Math.round(renderPos.x * 100) / 100,
+              renderY: Math.round(renderPos.y * 100) / 100,
+              hitFlash: Math.round(enemy.hitFlash * 1000) / 1000,
+              knockbackX: Math.round(enemy.knockbackOffsetX * 100) / 100,
+              knockbackY: Math.round(enemy.knockbackOffsetY * 100) / 100,
+            };
+          }),
+        },
         settlement: null,
       }),
       addXp: (n: number) => {
@@ -561,6 +674,9 @@ export class GameScene extends Phaser.Scene {
     if (this.playerHitFlash > 0) {
       this.playerHitFlash = Math.max(0, this.playerHitFlash - dt);
     }
+    if (this.playerSwingTimer > 0) {
+      this.playerSwingTimer = Math.max(0, this.playerSwingTimer - dt);
+    }
   }
 
   private randomEdgeSpawnPoint(): { x: number; y: number } {
@@ -589,6 +705,7 @@ export class GameScene extends Phaser.Scene {
     const sprite = this.add.image(x, y, 'enemy_boss').setDisplaySize(128, 128).setDepth(9);
 
     this.enemies.push({
+      id: this.nextEnemyId++,
       kind: 'boss',
       x,
       y,
@@ -600,6 +717,8 @@ export class GameScene extends Phaser.Scene {
       attackCooldown: BOSS_STATS.attackCooldown,
       attackCooldownRemaining: 0,
       hitFlash: 0,
+      knockbackOffsetX: 0,
+      knockbackOffsetY: 0,
       sprite,
     });
     if (this.enemies.length > this.maxConcurrent) {
@@ -668,6 +787,7 @@ export class GameScene extends Phaser.Scene {
     const sprite = this.add.image(x, y, texKey).setDepth(9);
 
     this.enemies.push({
+      id: this.nextEnemyId++,
       kind,
       x,
       y,
@@ -679,6 +799,8 @@ export class GameScene extends Phaser.Scene {
       attackCooldown: template.attackCooldown,
       attackCooldownRemaining: 0,
       hitFlash: 0,
+      knockbackOffsetX: 0,
+      knockbackOffsetY: 0,
       sprite,
     });
     if (this.enemies.length > this.maxConcurrent) {
@@ -700,6 +822,11 @@ export class GameScene extends Phaser.Scene {
       }
       if (enemy.hitFlash > 0) {
         enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+      }
+      if (enemy.knockbackOffsetX !== 0 || enemy.knockbackOffsetY !== 0) {
+        const decayed = decayKnockbackOffset(enemy.knockbackOffsetX, enemy.knockbackOffsetY, dt);
+        enemy.knockbackOffsetX = decayed.x;
+        enemy.knockbackOffsetY = decayed.y;
       }
     }
 
@@ -729,11 +856,13 @@ export class GameScene extends Phaser.Scene {
       if (dist <= touchDist && enemy.attackCooldownRemaining <= 0) {
         this.stats.hp = Math.max(0, this.stats.hp - enemy.contactDamage);
         enemy.attackCooldownRemaining = enemy.attackCooldown;
-        this.playerHitFlash = 0.12;
+        this.playerHitFlash = PLAYER_HIT_FLASH_DURATION;
+        this.playerScreenFlash = PLAYER_SCREEN_FLASH_DURATION;
         if (this.stats.hp <= 0) {
           this.finishRun(false);
           return;
         }
+        this.cameras.main.shake(PLAYER_SHAKE_DURATION_MS, PLAYER_SHAKE_INTENSITY);
       }
     }
   }
@@ -756,10 +885,13 @@ export class GameScene extends Phaser.Scene {
             if (Math.hypot(dx, dy) <= sword.range + enemy.radius) {
               const enemyAngle = Math.atan2(dy, dx);
               if (normalizeAngleDiff(enemyAngle, angle) <= halfArcRad) {
-                this.damageEnemyAt(i, dmg);
+                this.damageEnemyAt(i, dmg, this.playerX, this.playerY);
               }
             }
           }
+
+          this.playerSwingTimer = SWING_ANIM_DURATION;
+          this.playerSwingAngle = angle;
 
           const placement = computeSlashPlacement(
             this.playerX,
@@ -841,7 +973,7 @@ export class GameScene extends Phaser.Scene {
           for (let i = this.enemies.length - 1; i >= 0; i -= 1) {
             const enemy = this.enemies[i];
             if (Math.hypot(enemy.x - this.playerX, enemy.y - this.playerY) <= lantern.range + enemy.radius) {
-              this.damageEnemyAt(i, dmg);
+              this.damageEnemyAt(i, dmg, this.playerX, this.playerY);
             }
           }
         }
@@ -880,7 +1012,7 @@ export class GameScene extends Phaser.Scene {
       for (let j = this.enemies.length - 1; j >= 0; j -= 1) {
         const enemy = this.enemies[j];
         if (Math.hypot(enemy.x - dart.x, enemy.y - dart.y) <= dart.radius + enemy.radius) {
-          this.damageEnemyAt(j, dart.damage);
+          this.damageEnemyAt(j, dart.damage, dart.x - dart.vx * 0.05, dart.y - dart.vy * 0.05);
           dart.sprite.destroy();
           this.darts.splice(i, 1);
           break;
@@ -893,6 +1025,21 @@ export class GameScene extends Phaser.Scene {
     const collectRadius = PLAYER_RADIUS + ORB_RADIUS + 2;
     for (let i = this.orbs.length - 1; i >= 0; i -= 1) {
       const orb = this.orbs[i];
+      if (orb.scatterTimer > 0) {
+        const ratio = orb.scatterTimer / orb.scatterMaxTimer;
+        orb.x = Phaser.Math.Clamp(
+          orb.x + orb.scatterVx * ratio * dt,
+          PLAYER_RADIUS,
+          ARENA_WIDTH - PLAYER_RADIUS,
+        );
+        orb.y = Phaser.Math.Clamp(
+          orb.y + orb.scatterVy * ratio * dt,
+          HUD_HEIGHT + PLAYER_RADIUS,
+          ARENA_HEIGHT - PLAYER_RADIUS,
+        );
+        orb.scatterTimer = Math.max(0, orb.scatterTimer - dt);
+      }
+
       const dx = this.playerX - orb.x;
       const dy = this.playerY - orb.y;
       const dist = Math.hypot(dx, dy);
@@ -913,6 +1060,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateEffects(dt: number): void {
+    if (this.playerScreenFlash > 0) {
+      this.playerScreenFlash = Math.max(0, this.playerScreenFlash - dt);
+    }
+
     if (this.bossBanner) {
       this.bossBannerTimer -= dt;
       if (this.bossBannerTimer <= 0) {
@@ -938,6 +1089,37 @@ export class GameScene extends Phaser.Scene {
         slash.sprite.setRotation(placement.rotation);
       }
     }
+
+    for (let i = this.damageNumbers.length - 1; i >= 0; i -= 1) {
+      const dn = this.damageNumbers[i];
+      dn.timer -= dt;
+      dn.sinceLastHit += dt;
+      dn.totalLife += dt;
+      if (dn.timer <= 0) {
+        dn.text.destroy();
+        dn.shadowText.destroy();
+        this.damageNumbers.splice(i, 1);
+        continue;
+      }
+      dn.y -= DAMAGE_NUMBER_RISE_SPEED * dt * (0.4 + 0.6 * (dn.timer / dn.maxTimer));
+      const alpha = computeDamageNumberAlpha(dn.timer, dn.maxTimer);
+      dn.text.setPosition(Math.round(dn.x), Math.round(dn.y)).setAlpha(alpha);
+      dn.shadowText.setPosition(Math.round(dn.x) + 2, Math.round(dn.y) + 2).setAlpha(alpha);
+    }
+
+    const drag = Math.max(0, 1 - dt * 5);
+    for (let i = this.burstParticles.length - 1; i >= 0; i -= 1) {
+      const p = this.burstParticles[i];
+      p.timer -= dt;
+      if (p.timer <= 0) {
+        this.burstParticles.splice(i, 1);
+        continue;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= drag;
+      p.vy *= drag;
+    }
   }
 
   private findNearestEnemy(maxRange: number): EnemyEntity | null {
@@ -953,37 +1135,150 @@ export class GameScene extends Phaser.Scene {
     return best;
   }
 
-  private spawnOrbAt(x: number, y: number): void {
+  private spawnOrbAt(x: number, y: number, scatter?: OrbScatterVelocity): void {
     const orbSprite = this.add
       .image(x, y, 'xp_orb')
       .setDisplaySize(28, 28)
       .setDepth(7);
-    this.orbs.push({ x, y, sprite: orbSprite });
+    this.orbs.push({
+      x,
+      y,
+      scatterVx: scatter?.vx ?? 0,
+      scatterVy: scatter?.vy ?? 0,
+      scatterTimer: scatter?.duration ?? 0,
+      scatterMaxTimer: scatter?.duration ?? 0,
+      hopPeak: scatter?.hopPeak ?? 0,
+      sprite: orbSprite,
+    });
   }
 
-  private damageEnemyAt(index: number, damage: number): void {
+  private spawnDamageNumber(enemy: EnemyEntity, damage: number, isKill: boolean): void {
+    const yOffset = enemy.kind === 'boss' ? 42 : 24;
+    for (let i = this.damageNumbers.length - 1; i >= 0; i -= 1) {
+      const existing = this.damageNumbers[i];
+      if (canMergeDamageNumber(existing, enemy.id)) {
+        existing.amount += damage;
+        existing.sinceLastHit = 0;
+        existing.timer = existing.maxTimer;
+        existing.x = enemy.x;
+        existing.y = enemy.y - yOffset;
+        const label = formatDamageNumber(existing.amount);
+        existing.text
+          .setText(label)
+          .setPosition(Math.round(existing.x), Math.round(existing.y))
+          .setAlpha(1);
+        existing.shadowText
+          .setText(label)
+          .setPosition(Math.round(existing.x) + 2, Math.round(existing.y) + 2)
+          .setAlpha(1);
+        if (isKill) {
+          existing.text.setTint(0xe8b34b);
+        }
+        return;
+      }
+    }
+
+    if (this.damageNumbers.length >= MAX_DAMAGE_NUMBERS) {
+      const oldest = this.damageNumbers.shift();
+      if (oldest) {
+        oldest.text.destroy();
+        oldest.shadowText.destroy();
+      }
+    }
+
+    const spread = ((this.damageNumberCounter % 3) - 1) * 6;
+    this.damageNumberCounter += 1;
+    const x = Phaser.Math.Clamp(enemy.x + spread, 20, ARENA_WIDTH - 20);
+    const y = Math.max(HUD_HEIGHT + 16, enemy.y - yOffset);
+    const label = formatDamageNumber(damage);
+
+    const shadowText = addPixelText(this, x + 2, y + 2, label, {
+      size: 24,
+      color: PALETTE.inkBlack,
+      origin: 0.5,
+    }).setDepth(15);
+    const text = addPixelText(this, x, y, label, {
+      size: 24,
+      color: isKill ? PALETTE.lanternYellow : PALETTE.paperWhite,
+      origin: 0.5,
+    }).setDepth(16);
+
+    this.damageNumbers.push({
+      enemyId: enemy.id,
+      amount: damage,
+      x,
+      y,
+      timer: DAMAGE_NUMBER_DURATION,
+      maxTimer: DAMAGE_NUMBER_DURATION,
+      sinceLastHit: 0,
+      totalLife: 0,
+      text,
+      shadowText,
+    });
+  }
+
+  private spawnDeathBurst(enemy: EnemyEntity): void {
+    const count = enemy.kind === 'boss' ? 18 : 7;
+    const colors =
+      enemy.kind === 'boss'
+        ? [0xb03a2e, 0xe8b34b, 0xfbf6e9]
+        : enemy.kind === 'lantern'
+          ? [0xe8b34b, 0xb03a2e, 0xf2e3c6]
+          : [0xfbf6e9, 0x8fa8c8, 0xb03a2e];
+
+    for (let k = 0; k < count; k += 1) {
+      if (this.burstParticles.length >= MAX_BURST_PARTICLES) {
+        this.burstParticles.shift();
+      }
+      const angle = (k / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
+      const speed = enemy.kind === 'boss' ? 110 + Math.random() * 110 : 75 + Math.random() * 85;
+      const maxTimer = 0.26 + Math.random() * 0.12;
+      this.burstParticles.push({
+        x: enemy.x,
+        y: enemy.y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        size: enemy.kind === 'boss' ? 6 : 4,
+        color: colors[k % colors.length],
+        timer: maxTimer,
+        maxTimer,
+      });
+    }
+  }
+
+  private damageEnemyAt(
+    index: number,
+    damage: number,
+    sourceX = this.playerX,
+    sourceY = this.playerY,
+  ): void {
     const enemy = this.enemies[index];
     enemy.hp -= damage;
-    enemy.hitFlash = 0.08;
-    if (enemy.hp <= 0) {
+    enemy.hitFlash = ENEMY_HIT_FLASH_DURATION;
+
+    const kb = applyKnockbackImpulse(
+      enemy.knockbackOffsetX,
+      enemy.knockbackOffsetY,
+      sourceX,
+      sourceY,
+      enemy.x,
+      enemy.y,
+      enemy.kind === 'boss',
+    );
+    enemy.knockbackOffsetX = kb.x;
+    enemy.knockbackOffsetY = kb.y;
+
+    const isKill = enemy.hp <= 0;
+    this.spawnDamageNumber(enemy, damage, isKill);
+
+    if (isKill) {
+      this.spawnDeathBurst(enemy);
       if (enemy.kind === 'boss') {
         for (let k = 0; k < BOSS_XP_ORBS; k += 1) {
-          const angle = (k / BOSS_XP_ORBS) * Math.PI * 2 + Math.random() * 0.25;
-          const dist = 10 + Math.random() * 32;
-          const orbX = Phaser.Math.Clamp(
-            enemy.x + Math.cos(angle) * dist,
-            PLAYER_RADIUS,
-            ARENA_WIDTH - PLAYER_RADIUS,
-          );
-          const orbY = Phaser.Math.Clamp(
-            enemy.y + Math.sin(angle) * dist,
-            HUD_HEIGHT + PLAYER_RADIUS,
-            ARENA_HEIGHT - PLAYER_RADIUS,
-          );
-          this.spawnOrbAt(orbX, orbY);
+          this.spawnOrbAt(enemy.x, enemy.y, computeOrbScatterVelocity(k, BOSS_XP_ORBS));
         }
       } else {
-        this.spawnOrbAt(enemy.x, enemy.y);
+        this.spawnOrbAt(enemy.x, enemy.y, computeOrbScatterVelocity(0, 1));
       }
       enemy.sprite.destroy();
       this.enemies.splice(index, 1);
@@ -1162,12 +1457,16 @@ export class GameScene extends Phaser.Scene {
       this.lanternRingSprite.setVisible(false);
     }
 
-    // XP orbs
+    // XP orbs (with hop arc during initial scatter)
     for (const orb of this.orbs) {
-      orb.sprite.setPosition(Math.round(orb.x), Math.round(orb.y));
+      const hopY =
+        orb.scatterTimer > 0 && orb.scatterMaxTimer > 0
+          ? -Math.sin((1 - orb.scatterTimer / orb.scatterMaxTimer) * Math.PI) * orb.hopPeak
+          : 0;
+      orb.sprite.setPosition(Math.round(orb.x), Math.round(orb.y + hopY));
     }
 
-    // Enemies + crisp pixel HP bars
+    // Enemies + crisp pixel HP bars (render-only knockback & hit scale pop)
     for (const enemy of this.enemies) {
       const baseKey =
         enemy.kind === 'boss'
@@ -1176,17 +1475,29 @@ export class GameScene extends Phaser.Scene {
             ? 'enemy_lantern'
             : 'enemy_paper';
       const texKey = enemy.hitFlash > 0 ? `${baseKey}_hit` : baseKey;
+      const renderPos = computeClampedRenderPos(
+        enemy.x,
+        enemy.y,
+        enemy.knockbackOffsetX,
+        enemy.knockbackOffsetY,
+        enemy.radius,
+      );
+      const baseSize = enemy.kind === 'boss' ? 128 : 64;
+      const hitScale = enemy.hitFlash > 0 ? (enemy.kind === 'boss' ? 1.06 : 1.12) : 1;
+      const displaySize = Math.round(baseSize * hitScale);
+
       enemy.sprite
         .setTexture(texKey)
-        .setPosition(Math.round(enemy.x), Math.round(enemy.y))
+        .setPosition(Math.round(renderPos.x), Math.round(renderPos.y))
+        .setDisplaySize(displaySize, displaySize)
         .setFlipX(this.playerX < enemy.x);
 
       if (enemy.kind === 'boss' || enemy.hp < enemy.maxHp) {
         const w = enemy.kind === 'boss' ? 48 : 24;
         const yOffset = enemy.kind === 'boss' ? 44 : 26;
         const ratio = Math.max(0, enemy.hp / enemy.maxHp);
-        const barX = Math.round(enemy.x - w / 2);
-        const barY = Math.round(enemy.y - yOffset);
+        const barX = Math.round(renderPos.x - w / 2);
+        const barY = Math.round(renderPos.y - yOffset);
         g.fillStyle(0x10182b, 1);
         g.fillRect(barX - 1, barY - 1, w + 2, 6);
         g.fillStyle(0xb03a2e, 1);
@@ -1194,10 +1505,25 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Player sprite (standing vs 2-frame walk, facing direction, hit flash)
+    // Death burst pixel particles
+    for (const p of this.burstParticles) {
+      const alpha = Math.max(0, p.timer / p.maxTimer);
+      const sz = Math.max(2, Math.round(p.size * (0.5 + 0.5 * alpha)));
+      g.fillStyle(p.color, alpha);
+      g.fillRect(Math.round(p.x - sz / 2), Math.round(p.y - sz / 2), sz, sz);
+    }
+
+    // Player sprite (hit flash -> 2-frame sword swing -> 2-frame walk -> idle)
+    const swingPose = computeSwingPose(
+      this.playerSwingTimer,
+      this.playerSwingAngle,
+      this.playerFacingLeft,
+    );
     let playerTex = 'player_idle';
     if (this.playerHitFlash > 0) {
       playerTex = 'player_hit';
+    } else if (swingPose.active) {
+      playerTex = swingPose.textureKey;
     } else if (this.playerMoving) {
       playerTex = Math.floor(this.playerWalkTimer / 0.125) % 2 === 0
         ? 'player_walk_1'
@@ -1206,7 +1532,15 @@ export class GameScene extends Phaser.Scene {
     this.playerSprite
       .setTexture(playerTex)
       .setPosition(Math.round(this.playerX), Math.round(this.playerY))
-      .setFlipX(this.playerFacingLeft);
+      .setFlipX(swingPose.active ? swingPose.flipX : this.playerFacingLeft)
+      .setRotation(swingPose.active ? swingPose.rotation : 0);
+
+    // Subtle crimson screen flash when player takes contact damage
+    this.playerDamageFlashRect.setAlpha(
+      this.playerScreenFlash > 0
+        ? (this.playerScreenFlash / PLAYER_SCREEN_FLASH_DURATION) * PLAYER_SCREEN_FLASH_MAX_ALPHA
+        : 0,
+    );
 
     // Coin darts
     for (const dart of this.darts) {
@@ -1267,6 +1601,14 @@ export class GameScene extends Phaser.Scene {
     this.joystickAlpha = 0;
     this.joystickGfx.clear();
     this.clearBossBanner();
+    for (const dn of this.damageNumbers) {
+      dn.text.destroy();
+      dn.shadowText.destroy();
+    }
+    this.damageNumbers = [];
+    this.burstParticles = [];
+    this.playerScreenFlash = 0;
+    this.playerDamageFlashRect.setAlpha(0);
     this.levelUpModal?.destroy(true);
     this.levelUpModal = null;
     this.isLevelUpOpen = false;

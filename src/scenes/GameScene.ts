@@ -1058,7 +1058,10 @@ export class GameScene extends Phaser.Scene {
       const dy = this.playerY - orb.y;
       const dist = Math.hypot(dx, dy);
 
-      if (dist <= collectRadius) {
+      // Do not vacuum the orb mid-scatter: the 0.24s scatter is the visible
+      // payoff of a kill, and a close-range kill would otherwise collect the
+      // orb in the same update it spawns, so the scatter is never seen.
+      if (orb.scatterTimer <= 0 && dist <= collectRadius) {
         orb.sprite.destroy();
         this.orbs.splice(i, 1);
         this.gainXp(XP_PER_ORB);

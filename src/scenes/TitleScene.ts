@@ -5,9 +5,11 @@ import {
   PLAYER_MAX_HP,
   ROUND_DURATION_SECONDS,
 } from '../game/balance.ts';
-import { registerDebugHook } from '../game/debug.ts';
+import { createEmptyKillCounts, registerDebugHook } from '../game/debug.ts';
+import { requestLandscapeOnStart } from '../game/landscape.ts';
 import { addPixelText } from '../game/pixelFont.ts';
 import { buildNightAlleyBackdrop, ensureGameTextures, PALETTE } from '../game/pixelart.ts';
+import { getSoundState, setSoundMuted, unlockSound } from '../game/sound.ts';
 
 export class TitleScene extends Phaser.Scene {
   constructor() {
@@ -80,8 +82,73 @@ export class TitleScene extends Phaser.Scene {
       origin: 0.5,
     }).setDepth(11);
 
+    const bestiaryBtn = this.add
+      .rectangle(ARENA_WIDTH / 2, 380, 170, 44, 0x10182b)
+      .setStrokeStyle(2, 0x8fa8c8)
+      .setDepth(10)
+      .setInteractive({ useHandCursor: true });
+
+    const bestiaryLabel = addPixelText(this, ARENA_WIDTH / 2, 380, '图册', {
+      size: 24,
+      color: PALETTE.paperWhite,
+      origin: 0.5,
+    }).setDepth(11);
+
+    bestiaryBtn.on('pointerover', () => {
+      bestiaryBtn.setFillStyle(0x2e4a73);
+      bestiaryLabel.setTint(0xe8b34b);
+    });
+    bestiaryBtn.on('pointerout', () => {
+      bestiaryBtn.setFillStyle(0x10182b);
+      bestiaryLabel.setTint(0xfbf6e9);
+    });
+    bestiaryBtn.on('pointerdown', () => {
+      this.scene.start('BestiaryScene', { origin: 'TitleScene' });
+    });
+
+    const soundToggle = document.getElementById('sound-toggle') as HTMLButtonElement | null;
+    const syncSoundToggle = (): void => {
+      if (soundToggle) {
+        soundToggle.setAttribute('aria-pressed', String(getSoundState().soundMuted));
+      }
+    };
+    const onToggleClick = (): void => {
+      setSoundMuted(!getSoundState().soundMuted);
+      syncSoundToggle();
+    };
+    if (soundToggle) {
+      syncSoundToggle();
+      soundToggle.hidden = false;
+      soundToggle.addEventListener('click', onToggleClick);
+    }
+
+    let started = false;
     const startGame = (): void => {
+      if (started) {
+        return;
+      }
+      started = true;
+      unlockSound();
+      requestLandscapeOnStart();
       this.scene.start('GameScene');
+    };
+
+    const isNonMousePointer = (pointer: Phaser.Input.Pointer): boolean => {
+      if (pointer.wasTouch) {
+        return true;
+      }
+      const nativeType = (pointer.event as { pointerType?: string } | undefined)?.pointerType;
+      return typeof nativeType === 'string' && nativeType !== 'mouse';
+    };
+
+    let armedPointerId: number | null = null;
+    const clearArmForPointer = (pointer: Phaser.Input.Pointer): void => {
+      if (armedPointerId !== null && pointer.id === armedPointerId) {
+        armedPointerId = null;
+      }
+    };
+    const clearAllArm = (): void => {
+      armedPointerId = null;
     };
 
     startBtn.on('pointerover', () => {
@@ -92,10 +159,64 @@ export class TitleScene extends Phaser.Scene {
       startBtn.setFillStyle(0x2e2118);
       startLabel.setTint(0xfbf6e9);
     });
-    startBtn.on('pointerdown', startGame);
+    startBtn.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (isNonMousePointer(pointer)) {
+        if (armedPointerId === null) {
+          armedPointerId = pointer.id;
+        }
+        return;
+      }
+      startGame();
+    });
+    startBtn.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (armedPointerId !== null && pointer.id === armedPointerId) {
+        armedPointerId = null;
+        if (!pointer.wasCanceled) {
+          startGame();
+        }
+      }
+    });
 
-    this.input.keyboard?.once('keydown-ENTER', startGame);
-    this.input.keyboard?.once('keydown-SPACE', startGame);
+    this.input.on('pointerup', clearArmForPointer);
+    this.input.on('pointerupoutside', clearArmForPointer);
+    window.addEventListener('touchcancel', clearAllArm);
+    window.addEventListener('pointercancel', clearAllArm);
+
+    const onStartKey = (event: KeyboardEvent): void => {
+      if (
+        soundToggle &&
+        (event.target === soundToggle || document.activeElement === soundToggle)
+      ) {
+        return;
+      }
+      startGame();
+    };
+    const kb = this.input.keyboard;
+    kb?.on('keydown-ENTER', onStartKey);
+    kb?.on('keydown-SPACE', onStartKey);
+
+    let cleanedUp = false;
+    const cleanupTitle = (): void => {
+      if (cleanedUp) {
+        return;
+      }
+      cleanedUp = true;
+      if (soundToggle) {
+        soundToggle.removeEventListener('click', onToggleClick);
+        if (document.activeElement === soundToggle) {
+          soundToggle.blur();
+        }
+        soundToggle.hidden = true;
+      }
+      this.input.off('pointerup', clearArmForPointer);
+      this.input.off('pointerupoutside', clearArmForPointer);
+      window.removeEventListener('touchcancel', clearAllArm);
+      window.removeEventListener('pointercancel', clearAllArm);
+      kb?.off('keydown-ENTER', onStartKey);
+      kb?.off('keydown-SPACE', onStartKey);
+    };
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanupTitle);
+    this.events.once(Phaser.Scenes.Events.DESTROY, cleanupTitle);
 
     this.add
       .rectangle(ARENA_WIDTH / 2, 434, 710, 38, 0x10182b)
@@ -121,6 +242,7 @@ export class TitleScene extends Phaser.Scene {
         level: 1,
         xp: 0,
         kills: 0,
+        killsByKind: createEmptyKillCounts(),
         timeLeft: ROUND_DURATION_SECONDS,
         enemies: 0,
         maxConcurrent: 0,

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>夜巷 | NIGHT ALLEY</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #120e16;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #game-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #game-container canvas {
+        display: block;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+
+      #portrait-hint {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 18px;
+        padding: 6px 12px;
+        background-color: #2e2118;
+        border: 2px solid #c9973f;
+        box-shadow: 0 0 0 2px #17120c;
+        color: #f2e3c6;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.2;
+        letter-spacing: 1px;
+        pointer-events: none;
+        user-select: none;
+      }
+
+      #portrait-hint[hidden] {
+        display: none;
+      }
+
+      #portrait-hint .portrait-hint-icon {
+        color: #e8b34b;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-container"></div>
+    <div id="portrait-hint" role="status" aria-live="polite" hidden>
+      <span class="portrait-hint-icon" aria-hidden="true">↻</span>
+      <span class="portrait-hint-text">横屏体验更佳</span>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

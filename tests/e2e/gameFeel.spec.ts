@@ -1,8 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { ARENA_WIDTH, PLAYER_PICKUP_RADIUS } from '../../src/game/balance.ts';
 import type { DebugState } from '../../src/game/debug.ts';
 import { MAX_DAMAGE_NUMBERS } from '../../src/game/gameFeel.ts';
-import { startGame } from './helpers.ts';
+import { getDebugState, startGame } from './helpers.ts';
+
+const STAGE5_SCREENSHOT_DIR = path.resolve(process.cwd(), '../fun-stage5-screenshots');
 
 test.describe('Night Alley game feel (stage 2)', () => {
   test.beforeEach(async ({ page }) => {
@@ -464,5 +468,150 @@ test.describe('Night Alley game feel (stage 2)', () => {
     expect(observed.kills >= 8 || observed.everLevelUpOpen).toBe(true);
     expect(observed.maxXp).toBeGreaterThan(0);
     expect(observed.sawNaNOrb).toBe(false);
+  });
+
+  test('19. virtual joystick touch drag respects 6/7/50 CSS px thresholds across two scales and ignores right-half/second touch', async ({
+    browser,
+  }) => {
+    fs.mkdirSync(STAGE5_SCREENSHOT_DIR, { recursive: true });
+    const viewports = [
+      { width: 1280, height: 720, capture: true },
+      { width: 390, height: 844, capture: false },
+    ];
+
+    for (const vp of viewports) {
+      const context = await browser.newContext({
+        viewport: { width: vp.width, height: vp.height },
+        hasTouch: true,
+        isMobile: true,
+      });
+      try {
+        const page = await context.newPage();
+        page.on('pageerror', (err) => {
+          throw err;
+        });
+        await page.goto('/');
+        await page.waitForSelector('canvas', { state: 'visible' });
+        await page.waitForFunction(() => Boolean(window.__NIGHT_ALLEY_DEBUG__));
+
+        const cdp = await context.newCDPSession(page);
+        const titleBox = await page.locator('canvas').boundingBox();
+        expect(titleBox).not.toBeNull();
+        const startCssX = titleBox!.x + (480 / 960) * titleBox!.width;
+        const startCssY = titleBox!.y + (320 / 540) * titleBox!.height;
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: startCssX, y: startCssY, id: 1 }],
+        });
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchEnd',
+          touchPoints: [{ x: startCssX, y: startCssY, id: 1 }],
+        });
+        await page.waitForFunction(
+          () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
+        );
+
+        const box = await page.locator('canvas').boundingBox();
+        expect(box).not.toBeNull();
+        const originX = box!.x + box!.width * 0.22;
+        const originY = box!.y + box!.height * 0.65;
+
+        // 1. Right-half touch cannot start a drag
+        const rightOriginX = box!.x + box!.width * 0.72;
+        const beforeRight = await getDebugState(page);
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: rightOriginX, y: originY, id: 10 }],
+        });
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: rightOriginX + 45, y: originY, id: 10 }],
+        });
+        await page.waitForTimeout(250);
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchEnd',
+          touchPoints: [{ x: rightOriginX + 45, y: originY, id: 10 }],
+        });
+        const afterRight = await getDebugState(page);
+        expect(Math.abs(afterRight.playerX - beforeRight.playerX)).toBeLessThan(0.5);
+
+        // 2. Left-half press (idle) + 6 CSS px inside deadzone -> no movement
+        const beforeDeadzone = await getDebugState(page);
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: originX, y: originY, id: 11 }],
+        });
+        await page.waitForTimeout(180);
+        if (vp.capture) {
+          await page.screenshot({ path: path.join(STAGE5_SCREENSHOT_DIR, 'joystick-idle.png') });
+        }
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: originX + 6, y: originY, id: 11 }],
+        });
+        await page.waitForTimeout(280);
+        const afterDeadzone = await getDebugState(page);
+        expect(Math.abs(afterDeadzone.playerX - beforeDeadzone.playerX)).toBeLessThan(0.5);
+
+        // 3. Partial tilt beyond 7 CSS px (28 CSS px) -> moves right
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: originX + 28, y: originY, id: 11 }],
+        });
+        await page.waitForTimeout(260);
+        if (vp.capture) {
+          await page.screenshot({ path: path.join(STAGE5_SCREENSHOT_DIR, 'joystick-partial.png') });
+        }
+        const afterPartial = await getDebugState(page);
+        expect(afterPartial.playerX).toBeGreaterThan(afterDeadzone.playerX + 12);
+
+        // 4. Full tilt beyond 50 CSS px (75 CSS px) + second touch ignored
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: originX + 75, y: originY, id: 11 }],
+        });
+        await page.waitForTimeout(260);
+        if (vp.capture) {
+          await page.screenshot({ path: path.join(STAGE5_SCREENSHOT_DIR, 'joystick-full.png') });
+        }
+        const afterFull = await getDebugState(page);
+        expect(afterFull.playerX).toBeGreaterThan(afterPartial.playerX + 20);
+
+        // Second finger tries to steer up/left while finger 11 holds right
+        const secondTouch = { x: originX + 140, y: originY, id: 12 };
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: originX + 75, y: originY, id: 11 }, secondTouch],
+        });
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [
+            { x: originX + 75, y: originY, id: 11 },
+            { x: originX + 20, y: originY - 120, id: 12 },
+          ],
+        });
+        await page.waitForTimeout(250);
+        const duringSecond = await getDebugState(page);
+        expect(duringSecond.playerX).toBeGreaterThan(afterFull.playerX + 15);
+        expect(Math.abs(duringSecond.playerY - afterFull.playerY)).toBeLessThan(5);
+
+        // Release both fingers -> movement stops
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchEnd',
+          touchPoints: [{ x: originX + 20, y: originY - 120, id: 12 }],
+        });
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchEnd',
+          touchPoints: [{ x: originX + 75, y: originY, id: 11 }],
+        });
+        const atRelease = await getDebugState(page);
+        await page.waitForTimeout(260);
+        const afterRelease = await getDebugState(page);
+        expect(Math.abs(afterRelease.playerX - atRelease.playerX)).toBeLessThan(1);
+        expect(Math.abs(afterRelease.playerY - atRelease.playerY)).toBeLessThan(1);
+      } finally {
+        await context.close();
+      }
+    }
   });
 });

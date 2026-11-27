@@ -171,7 +171,7 @@ test.describe('Night Alley pixel visuals & controls', () => {
 
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'settlement.png') });
 
-    await clickLogical(page, 370, 405);
+    await clickLogical(page, 280, 405);
     await page.waitForFunction(
       () => window.__NIGHT_ALLEY_DEBUG__?.getState().scene === 'GameScene',
     );

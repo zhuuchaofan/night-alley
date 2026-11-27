@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BOSS_SPAWN_ELAPSED_SECONDS,
+  BOSS_STATS,
   createInitialPlayerStats,
   createInitialWeapon,
+  ELITE_XP_ORBS,
+  enemyStatsForKind,
   EVOLUTION_DEFS,
   EVOLUTION_MIN_LEVEL,
+  SHOOTER_BOLT_DAMAGE,
+  SHOOTER_FIRE_COOLDOWN,
+  SHOOTER_RANGE,
+  SHOOTER_RETREAT_DIST,
   WEAPON_DEFS,
   WEAPON_ORDER,
 } from '../../src/game/balance.ts';
@@ -75,6 +83,30 @@ function collectAllGameUiStrings(): string[] {
     '最高同时在场敌人数：0',
     '再来一局',
     '返回标题',
+    // BestiaryScene (all 6 enemies + headers + formatted balance values)
+    '图册',
+    '返回',
+    '开局数值 · 血量提升 · 移速提升 · 疾纸人血量固定 · 大心魔数值固定',
+    '本局击杀 未开局',
+    '本局击杀 0123456789',
+    ...(['paper', 'lantern', 'swift', 'shooter', 'elite'] as const).map((kind) => {
+      const s = enemyStatsForKind(kind, 0);
+      return `血量 ${s.maxHp} · 移速 ${s.speed.toFixed(2).replace(/\.?0+$/, '')} 近身伤害 ${s.contactDamage}`;
+    }),
+    `血量 ${BOSS_STATS.maxHp} · 移速 ${BOSS_STATS.speed.toFixed(2).replace(/\.?0+$/, '')} 近身伤害 ${BOSS_STATS.contactDamage}`,
+    '心魔',
+    '灯笼',
+    '疾纸人',
+    '远灯笼',
+    '大魔面',
+    '大心魔',
+    '近身攻击',
+    '高速近身 · 血量固定',
+    `近身伤害 ${enemyStatsForKind('shooter', 0).contactDamage} · 远程伤害 ${SHOOTER_BOLT_DAMAGE}`,
+    `发射间隔 ${SHOOTER_FIRE_COOLDOWN.toFixed(1)}s · >${SHOOTER_RANGE}px 靠近`,
+    `<${SHOOTER_RETREAT_DIST}px 后退至 ${SHOOTER_RANGE}px`,
+    `击杀掉落 ${ELITE_XP_ORBS} 个升级珠`,
+    `${BOSS_SPAWN_ELAPSED_SECONDS}s 现身 · 攻击间隔 ${BOSS_STATS.attackCooldown}s`,
   ];
 }
 

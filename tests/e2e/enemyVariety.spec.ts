@@ -170,11 +170,12 @@ test.describe('Night Alley enemy variety (stage 4)', () => {
 
     const killSample = await page.evaluate(
       () =>
-        new Promise<{ killed: boolean; orbsDelta: number }>((resolve) => {
+        new Promise<{ killed: boolean; orbsDelta: number; eliteKillsDelta: number }>((resolve) => {
           const dbg = window.__NIGHT_ALLEY_DEBUG__!;
           let prevOrbs = dbg.getState().gameFeel?.orbs.length ?? 0;
           let prevKills = dbg.getState().kills;
           let prevElites = dbg.getState().enemiesByKind?.elite ?? 0;
+          let prevEliteKills = dbg.getState().killsByKind.elite;
           const started = performance.now();
 
           const step = (): void => {
@@ -186,16 +187,21 @@ test.describe('Night Alley enemy variety (stage 4)', () => {
             const curElites = s.enemiesByKind?.elite ?? 0;
 
             if (prevElites > 0 && curElites === 0 && s.kills > prevKills) {
-              resolve({ killed: true, orbsDelta: curOrbs - prevOrbs });
+              resolve({
+                killed: true,
+                orbsDelta: curOrbs - prevOrbs,
+                eliteKillsDelta: s.killsByKind.elite - prevEliteKills,
+              });
               return;
             }
 
             prevOrbs = curOrbs;
             prevKills = s.kills;
             prevElites = curElites;
+            prevEliteKills = s.killsByKind.elite;
 
             if (performance.now() - started > 12000) {
-              resolve({ killed: false, orbsDelta: 0 });
+              resolve({ killed: false, orbsDelta: 0, eliteKillsDelta: 0 });
               return;
             }
             requestAnimationFrame(step);
@@ -206,6 +212,7 @@ test.describe('Night Alley enemy variety (stage 4)', () => {
 
     expect(killSample.killed).toBe(true);
     expect(killSample.orbsDelta).toBeGreaterThanOrEqual(3);
+    expect(killSample.eliteKillsDelta).toBe(1);
   });
 
   test('4. shooter retreating while clamped against wall aims from post-move position', async ({
